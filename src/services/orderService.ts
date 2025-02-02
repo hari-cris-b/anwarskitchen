@@ -2,113 +2,91 @@ import { supabase } from '../lib/supabase';
 import { Order, CreateOrderRequest } from '../types';
 
 export class OrderService {
-  static async placeOrder(order: CreateOrderRequest): Promise<{ data: Order | null; error: Error | null }> {
-    try {
-      // Create the order first
-      const { data: orderData, error: orderError } = await supabase
-        .from('orders')
-        .insert({
-          table_number: order.table_number,
-          server_id: order.server_id,
-          server_name: order.server_name,
-          franchise_id: order.franchise_id,
-          status: order.status,
-          payment_status: order.payment_status,
-          subtotal: order.subtotal,
-          tax: order.tax,
-          total: order.total
-        })
-        .select()
-        .single();
+  static async getOrders(franchiseId: string): Promise<Order[]> {
+    const { data, error } = await supabase
+      .from('orders')
+      .select(`
+        *,
+        items:order_items(*)
+      `)
+      .eq('franchise_id', franchiseId)
+      .order('created_at', { ascending: false });
 
-      if (orderError) throw orderError;
-
-      // Then create the order items
-      const orderItems = order.items.map(item => ({
-        order_id: orderData.id,
-        menu_item_id: item.menu_item_id,
-        name: item.name,
-        price: item.price,
-        quantity: item.quantity,
-        category: item.category,
-        tax_rate: item.tax_rate
-      }));
-
-      const { error: itemsError } = await supabase
-        .from('order_items')
-        .insert(orderItems);
-
-      if (itemsError) throw itemsError;
-
-      // Return the complete order with items
-      return { 
-        data: { 
-          ...orderData, 
-          items: order.items 
-        }, 
-        error: null 
-      };
-    } catch (error) {
-      console.error('Error placing order:', error);
-      return { data: null, error: error as Error };
-    }
+    if (error) throw new Error(error.message);
+    return (data as Order[]) || [];
   }
 
-  static async getOrders(franchiseId: string): Promise<Order[]> {
-    try {
-      // Get all orders for the franchise
-      const { data: orders, error: ordersError } = await supabase
-        .from('orders')
-        .select('*')
-        .eq('franchise_id', franchiseId)
-        .order('created_at', { ascending: false });
+  static async placeOrder(orderRequest: CreateOrderRequest): Promise<Order> {
+    // Create the order
+    const { data: order, error: orderError } = await supabase
+      .from('orders')
+      .insert({
+        table_number: orderRequest.table_number,
+        server_id: orderRequest.server_id,
+        server_name: orderRequest.server_name,
+        franchise_id: orderRequest.franchise_id,
+        status: 'pending' as const,
+        payment_status: 'unpaid' as const,
+        subtotal: orderRequest.subtotal,
+        tax: orderRequest.tax,
+        total: orderRequest.total,
+        discount: orderRequest.discount || 0,
+        additional_charges: orderRequest.additional_charges || 0
+      })
+      .select()
+      .single();
 
-      if (ordersError) throw ordersError;
+    if (orderError) throw new Error(orderError.message);
+    if (!order) throw new Error('Failed to create order');
 
-      // Get all order items for these orders
-      const { data: items, error: itemsError } = await supabase
-        .from('order_items')
-        .select('*')
-        .in('order_id', orders.map(o => o.id));
+    // Insert order items
+    const { error: itemsError } = await supabase
+      .from('order_items')
+      .insert(
+        orderRequest.items.map(item => ({
+          order_id: order.id,
+          menu_item_id: item.menu_item_id,
+          name: item.name,
+          price: item.price,
+          quantity: item.quantity,
+          category: item.category,
+          tax_rate: item.tax_rate
+        }))
+      );
 
-      if (itemsError) throw itemsError;
+    if (itemsError) throw new Error(itemsError.message);
 
-      // Combine orders with their items
-      return orders.map(order => ({
-        ...order,
-        items: items.filter(item => item.order_id === order.id)
-      }));
-    } catch (error) {
-      console.error('Error getting orders:', error);
-      return [];
-    }
+    // Fetch the complete order with items
+    const { data: completeOrder, error: fetchError } = await supabase
+      .from('orders')
+      .select(`
+        *,
+        items:order_items(*)
+      `)
+      .eq('id', order.id)
+      .single();
+
+    if (fetchError) throw new Error(fetchError.message);
+    if (!completeOrder) throw new Error('Failed to fetch complete order');
+
+    return completeOrder as Order;
   }
 
   static async updateOrderStatus(orderId: string, status: Order['status']): Promise<void> {
-    try {
-      const { error } = await supabase
-        .from('orders')
-        .update({ status })
-        .eq('id', orderId);
+    const { error } = await supabase
+      .from('orders')
+      .update({ status })
+      .eq('id', orderId);
 
-      if (error) throw error;
-    } catch (error) {
-      console.error('Error updating order status:', error);
-      throw error;
-    }
+    if (error) throw new Error(error.message);
   }
 
-  static async updatePaymentStatus(orderId: string, paymentStatus: Order['payment_status']): Promise<void> {
-    try {
-      const { error } = await supabase
-        .from('orders')
-        .update({ payment_status: paymentStatus })
-        .eq('id', orderId);
+  static async updatePaymentStatus(orderId: string, payment_status: Order['payment_status']): Promise<void> {
+    const { error } = await supabase
+      .from('orders')
+      .update({ payment_status })
+      .eq('id', orderId);
 
-      if (error) throw error;
-    } catch (error) {
-      console.error('Error updating payment status:', error);
-      throw error;
-    }
+    if (error) throw new Error(error.message);
   }
 }

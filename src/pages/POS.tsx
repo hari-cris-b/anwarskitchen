@@ -20,6 +20,10 @@ export default function POS() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showAdjustments, setShowAdjustments] = useState(false);
+  const [discount, setDiscount] = useState<string>('');
+  const [additionalCharges, setAdditionalCharges] = useState<string>('');
+  const [discountType, setDiscountType] = useState<'percentage' | 'amount'>('percentage');
 
   useEffect(() => {
     let mounted = true;
@@ -75,11 +79,22 @@ export default function POS() {
     const subtotal = items.reduce((sum, item) => sum + (item.price * item.quantity), 0);
     const taxRate = settings?.tax_rate || 0;
     const tax = (subtotal * taxRate) / 100;
-    const total = Math.round(subtotal + tax);
+    
+    // Calculate discount
+    const discountValue = discount ? parseFloat(discount) : 0;
+    const discountAmount = discountType === 'percentage' 
+      ? (subtotal * discountValue) / 100 
+      : discountValue;
+
+    // Calculate total with all adjustments
+    const additionalChargesValue = additionalCharges ? parseFloat(additionalCharges) : 0;
+    const total = Math.round(subtotal + tax - discountAmount + additionalChargesValue);
 
     return {
       subtotal,
       tax,
+      discount: discountAmount,
+      additionalCharges: additionalChargesValue,
       total
     };
   };
@@ -112,25 +127,24 @@ export default function POS() {
   };
 
   const handlePlaceOrder = async () => {
+    if (!profile?.franchise_id) {
+      toast.error('No franchise ID available');
+      return;
+    }
+
+    if (cart.length === 0) {
+      toast.error('Cart is empty');
+      return;
+    }
+
+    if (!tableNumber) {
+      toast.error('Please enter a table number');
+      return;
+    }
+
+    setIsSubmitting(true);
+
     try {
-      if (isSubmitting) return;
-
-      if (!profile?.franchise_id) {
-        throw new Error('No franchise ID available');
-      }
-
-      if (!tableNumber) {
-        toast.error('Please enter a table number');
-        return;
-      }
-
-      if (cart.length === 0) {
-        toast.error('Cart is empty');
-        return;
-      }
-
-      setIsSubmitting(true);
-      const bill = calculateBill(cart);
       const orderData: CreateOrderRequest = {
         table_number: tableNumber,
         server_id: profile.id,
@@ -140,6 +154,8 @@ export default function POS() {
         payment_status: 'unpaid',
         subtotal: bill.subtotal,
         tax: bill.tax,
+        discount: bill.discount,
+        additional_charges: bill.additionalCharges,
         total: bill.total,
         items: cart.map(item => ({
           menu_item_id: item.id,
@@ -151,15 +167,13 @@ export default function POS() {
         }))
       };
 
-      const { error: orderError } = await OrderService.placeOrder(orderData);
-
-      if (orderError) {
-        throw orderError;
-      }
-
+      await OrderService.placeOrder(orderData);
       toast.success('Order placed successfully');
       setCart([]);
       setTableNumber('');
+      setDiscount('');
+      setAdditionalCharges('');
+      setShowAdjustments(false);
     } catch (err) {
       console.error('Error placing order:', err);
       toast.error(err instanceof Error ? err.message : 'Failed to place order');
@@ -183,63 +197,53 @@ export default function POS() {
   const bill = calculateBill(cart);
 
   return (
-    <div className="container mx-auto px-4 py-8">
-      <div className="flex flex-col md:flex-row gap-8">
-        {/* Menu Section */}
-        <div className="w-full md:w-2/3">
-          <div className="mb-6">
-            <h2 className="text-2xl font-bold mb-4">Menu</h2>
-            <div className="flex gap-2 mb-4 overflow-x-auto">
-              <button
-                onClick={() => setSelectedCategory('all')}
-                className={`px-4 py-2 rounded-full ${
-                  selectedCategory === 'all'
-                    ? 'bg-orange-600 text-white'
-                    : 'bg-gray-200'
-                }`}
-              >
-                All
-              </button>
-              {categories.filter(cat => cat !== 'all').map(category => (
-                <button
-                  key={category}
-                  onClick={() => setSelectedCategory(category)}
-                  className={`px-4 py-2 rounded-full whitespace-nowrap ${
-                    selectedCategory === category
-                      ? 'bg-orange-600 text-white'
-                      : 'bg-gray-200'
-                  }`}
-                >
-                  {category}
-                </button>
-              ))}
-            </div>
-            
-            {filteredItems.length === 0 ? (
-              <p className="text-gray-500 text-center py-8">No items found in this category</p>
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                {filteredItems.map(item => (
-                  <div
-                    key={item.id}
-                    className="bg-white p-4 rounded-lg shadow-sm hover:shadow-md transition-shadow cursor-pointer"
-                    onClick={() => handleAddToCart(item)}
-                  >
-                    <h3 className="font-semibold">{item.name}</h3>
-                    <p className="text-gray-600">₹{item.price.toFixed(2)}</p>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+    <div className="h-[calc(100vh-4rem)] flex">
+      {/* Menu Section */}
+      <div className="w-2/3 bg-gray-50 p-6 overflow-hidden flex flex-col">
+        {/* Categories */}
+        <div className="flex gap-2 mb-6 overflow-x-auto pb-2">
+          {categories.map((category) => (
+            <button
+              key={category}
+              onClick={() => setSelectedCategory(category)}
+              className={`px-4 py-2 rounded-full whitespace-nowrap ${
+                selectedCategory === category
+                  ? 'bg-orange-500 text-white'
+                  : 'bg-white text-gray-700 hover:bg-gray-100'
+              }`}
+            >
+              {category}
+            </button>
+          ))}
         </div>
 
-        {/* Cart Section */}
-        <div className="w-full md:w-1/3">
-          <div className="bg-white p-6 rounded-lg shadow-sm">
-            <h2 className="text-2xl font-bold mb-4">Cart</h2>
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-1">
+        {/* Menu Items Grid */}
+        <div className="flex-1 overflow-y-auto">
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+            {filteredItems.map((item) => (
+              <button
+                key={item.id}
+                onClick={() => handleAddToCart(item)}
+                className="bg-white p-4 rounded-lg shadow-sm hover:shadow-md transition-shadow text-left"
+              >
+                <h3 className="font-medium mb-1">{item.name}</h3>
+                <p className="text-sm text-gray-600">{item.category}</p>
+                <p className="text-orange-600 mt-2">₹{item.price.toFixed(2)}</p>
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Cart Section */}
+      <div className="w-1/3 bg-white border-l border-gray-200 flex flex-col">
+        <div className="p-6 border-b border-gray-200">
+          <div className="flex justify-between items-center mb-4">
+            <h2 className="text-xl font-semibold">Current Order</h2>
+          </div>
+          <div className="flex gap-4">
+            <div className="flex-1">
+              <label className="block text-sm text-gray-600 mb-1">
                 Table Number
               </label>
               <input
@@ -250,63 +254,157 @@ export default function POS() {
                 placeholder="Enter table number"
               />
             </div>
+          </div>
+        </div>
 
-            {cart.length === 0 ? (
-              <p className="text-gray-500 text-center py-4">Cart is empty</p>
-            ) : (
-              <>
-                <div className="space-y-2 mb-4">
-                  {cart.map(item => (
-                    <div key={item.id} className="flex justify-between items-center">
-                      <div>
-                        <p className="font-medium">{item.name}</p>
-                        <p className="text-sm text-gray-600">₹{item.price.toFixed(2)} x {item.quantity}</p>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => handleUpdateQuantity(item.id, item.quantity - 1)}
-                          className="px-2 py-1 bg-gray-100 rounded"
-                        >
-                          -
-                        </button>
-                        <span>{item.quantity}</span>
-                        <button
-                          onClick={() => handleUpdateQuantity(item.id, item.quantity + 1)}
-                          className="px-2 py-1 bg-gray-100 rounded"
-                        >
-                          +
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-
-                <div className="border-t pt-4 space-y-2">
-                  <div className="flex justify-between text-sm">
-                    <span>Subtotal</span>
-                    <span>₹{bill.subtotal.toFixed(2)}</span>
-                  </div>
-                  <div className="flex justify-between text-sm">
-                    <span>Tax ({settings?.tax_rate || 0}%)</span>
-                    <span>₹{bill.tax.toFixed(2)}</span>
-                  </div>
-                  <div className="flex justify-between font-bold pt-2 border-t">
-                    <span>Total</span>
-                    <span>₹{bill.total.toFixed(2)}</span>
-                  </div>
-                </div>
-
-                <button
-                  onClick={handlePlaceOrder}
-                  disabled={isSubmitting}
-                  className={`w-full mt-4 px-4 py-2 bg-orange-600 text-white rounded-md ${
-                    isSubmitting ? 'opacity-50 cursor-not-allowed' : 'hover:bg-orange-700'
-                  }`}
+        <div className="flex-1 overflow-y-auto p-6">
+          {cart.length === 0 ? (
+            <div className="text-center text-gray-500 mt-8">
+              No items in cart
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {cart.map((item, index) => (
+                <div
+                  key={index}
+                  className="flex justify-between items-start pb-4 border-b last:border-0"
                 >
-                  {isSubmitting ? 'Placing Order...' : 'Place Order'}
-                </button>
-              </>
+                  <div>
+                    <h3 className="font-medium">{item.name}</h3>
+                    <div className="flex items-center mt-1">
+                      <button
+                        onClick={() => handleUpdateQuantity(item.id, item.quantity - 1)}
+                        className="w-8 h-8 flex items-center justify-center border rounded-l hover:bg-gray-100"
+                      >
+                        -
+                      </button>
+                      <span className="w-12 h-8 flex items-center justify-center border-t border-b">
+                        {item.quantity}
+                      </span>
+                      <button
+                        onClick={() => handleUpdateQuantity(item.id, item.quantity + 1)}
+                        className="w-8 h-8 flex items-center justify-center border rounded-r hover:bg-gray-100"
+                      >
+                        +
+                      </button>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <p>₹{(item.price * item.quantity).toFixed(2)}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Bill Details */}
+        <div className="border-t border-gray-200">
+          <div className="p-6">
+            <button
+              className="w-full mb-4 text-left px-4 py-2 bg-gray-100 rounded-md hover:bg-gray-200 flex justify-between items-center"
+              onClick={() => setShowAdjustments(!showAdjustments)}
+            >
+              <span>Adjustments</span>
+              <span>{showAdjustments ? '▼' : '▶'}</span>
+            </button>
+
+            {showAdjustments && (
+              <div className="space-y-4 mb-4">
+                <div>
+                  <label className="block text-sm text-gray-600 mb-1">
+                    Discount
+                  </label>
+                  <div className="flex gap-2">
+                    <select
+                      value={discountType}
+                      onChange={(e) => setDiscountType(e.target.value as 'percentage' | 'amount')}
+                      className="px-2 py-1 border rounded-md text-sm"
+                    >
+                      <option value="percentage">%</option>
+                      <option value="amount">₹</option>
+                    </select>
+                    <input
+                      type="number"
+                      value={discount}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        if (value === '' || value === '-') {
+                          setDiscount(value);
+                        } else {
+                          const num = parseFloat(value);
+                          if (!isNaN(num) && num >= 0) {
+                            setDiscount(value);
+                          }
+                        }
+                      }}
+                      className="w-full px-2 py-1 border rounded-md text-sm"
+                      placeholder={discountType === 'percentage' ? "Enter discount %" : "Enter discount amount"}
+                      min="0"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm text-gray-600 mb-1">
+                    Additional Charges
+                  </label>
+                  <input
+                    type="number"
+                    value={additionalCharges}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      if (value === '' || value === '-') {
+                        setAdditionalCharges(value);
+                      } else {
+                        const num = parseFloat(value);
+                        if (!isNaN(num) && num >= 0) {
+                          setAdditionalCharges(value);
+                        }
+                      }
+                    }}
+                    className="w-full px-2 py-1 border rounded-md text-sm"
+                    placeholder="Enter additional charges"
+                    min="0"
+                  />
+                </div>
+              </div>
             )}
+
+            <div className="space-y-2 mb-6">
+              <div className="flex justify-between text-sm">
+                <span className="text-gray-600">Subtotal</span>
+                <span>₹{bill.subtotal.toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between text-sm">
+                <span className="text-gray-600">Tax ({settings?.tax_rate || 0}%)</span>
+                <span>₹{bill.tax.toFixed(2)}</span>
+              </div>
+              {parseFloat(discount) > 0 && (
+                <div className="flex justify-between text-sm text-green-600">
+                  <span>Discount {discountType === 'percentage' ? `(${discount}%)` : ''}</span>
+                  <span>-₹{bill.discount.toFixed(2)}</span>
+                </div>
+              )}
+              {parseFloat(additionalCharges) > 0 && (
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-600">Additional Charges</span>
+                  <span>₹{bill.additionalCharges.toFixed(2)}</span>
+                </div>
+              )}
+              <div className="flex justify-between font-bold pt-2 border-t">
+                <span>Total</span>
+                <span>₹{bill.total.toFixed(2)}</span>
+              </div>
+            </div>
+
+            <button
+              onClick={handlePlaceOrder}
+              disabled={isSubmitting}
+              className="w-full py-3 bg-orange-500 text-white rounded-md hover:bg-orange-600 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isSubmitting ? 'Placing Order...' : 'Place Order'}
+            </button>
           </div>
         </div>
       </div>

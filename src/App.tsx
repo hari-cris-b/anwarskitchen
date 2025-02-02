@@ -3,11 +3,17 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import { Toaster } from 'react-hot-toast';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import ProtectedRoute from './components/ProtectedRoute';
+import RoleBasedRoute from './components/RoleBasedRoute';
+import Navigation from './components/Navigation';
 import LoadingSpinner from './components/LoadingSpinner';
 import Login from './pages/Login';
 import POS from './pages/POS';
 import Kitchen from './pages/Kitchen';
 import Orders from './pages/Orders';
+import Menu from './pages/Menu';
+import Reports from './pages/Reports';
+import Settings from './pages/Settings';
+import Staff from './pages/Staff';
 import Profile from './pages/Profile';
 import Unauthorized from './pages/Unauthorized';
 import FranchiseProvider from './contexts/FranchiseContext';
@@ -37,15 +43,50 @@ function AppRoutes() {
       {/* Main Routes */}
       <Route path="/*" element={
         <ProtectedRoute>
-          <FranchiseProvider>
-            <Routes>
-              <Route path="/" element={<Navigate to="pos" replace />} />
-              <Route path="pos" element={<POS />} />
-              <Route path="kitchen" element={<Kitchen />} />
-              <Route path="orders" element={<Orders />} />
-              <Route path="profile" element={<Profile />} />
-            </Routes>
-          </FranchiseProvider>
+          <div className="min-h-screen bg-gray-50">
+            <Navigation />
+            <main className="pt-4">
+              <Routes>
+                <Route path="/" element={<Navigate to="pos" replace />} />
+                <Route path="pos" element={
+                  <RoleBasedRoute allowedRoles={['staff', 'manager', 'admin']}>
+                    <POS />
+                  </RoleBasedRoute>
+                } />
+                <Route path="kitchen" element={
+                  <RoleBasedRoute allowedRoles={['staff', 'manager', 'admin']}>
+                    <Kitchen />
+                  </RoleBasedRoute>
+                } />
+                <Route path="orders" element={
+                  <RoleBasedRoute allowedRoles={['staff', 'manager', 'admin']}>
+                    <Orders />
+                  </RoleBasedRoute>
+                } />
+                <Route path="menu" element={
+                  <RoleBasedRoute allowedRoles={['manager', 'admin']}>
+                    <Menu />
+                  </RoleBasedRoute>
+                } />
+                <Route path="reports" element={
+                  <RoleBasedRoute allowedRoles={['manager', 'admin']}>
+                    <Reports />
+                  </RoleBasedRoute>
+                } />
+                <Route path="settings" element={
+                  <RoleBasedRoute allowedRoles={['admin']}>
+                    <Settings />
+                  </RoleBasedRoute>
+                } />
+                <Route path="staff" element={
+                  <RoleBasedRoute allowedRoles={['admin']}>
+                    <Staff />
+                  </RoleBasedRoute>
+                } />
+                <Route path="profile" element={<Profile />} />
+              </Routes>
+            </main>
+          </div>
         </ProtectedRoute>
       } />
     </Routes>
@@ -56,29 +97,31 @@ function App() {
   return (
     <Router>
       <AuthProvider>
-        <Toaster 
-          position="top-right"
-          toastOptions={{
-            duration: 4000,
-            style: {
-              background: '#333',
-              color: '#fff',
-            },
-            success: {
-              iconTheme: {
-                primary: '#22c55e',
-                secondary: '#fff',
+        <FranchiseProvider>
+          <AppRoutes />
+          <Toaster 
+            position="top-right"
+            toastOptions={{
+              duration: 4000,
+              style: {
+                background: '#333',
+                color: '#fff',
               },
-            },
-            error: {
-              iconTheme: {
-                primary: '#ef4444',
-                secondary: '#fff',
+              success: {
+                iconTheme: {
+                  primary: '#22c55e',
+                  secondary: '#fff',
+                },
               },
-            },
-          }}
-        />
-        <AppRoutes />
+              error: {
+                iconTheme: {
+                  primary: '#ef4444',
+                  secondary: '#fff',
+                },
+              },
+            }}
+          />
+        </FranchiseProvider>
       </AuthProvider>
     </Router>
   );

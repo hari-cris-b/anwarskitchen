@@ -35,15 +35,18 @@ export interface OrderItem {
   name: string;
   price: number;
   quantity: number;
-  category: string;
-  tax_rate: number;
+  category?: string;
+  tax_rate?: number;
   notes?: string;
   created_at?: string;
+  updated_at?: string;
 }
 
 export interface BillCalculation {
   subtotal: number;
   tax: number;
+  discount: number;
+  additionalCharges: number;
   total: number;
 }
 
@@ -61,17 +64,20 @@ export interface BaseOrder {
   payment_method?: PaymentMethod;
   subtotal: number;
   tax: number;
+  discount: number;
+  additional_charges: number;
   total: number;
 }
 
 export interface Order extends BaseOrder {
   id: string;
   created_at: string;
+  updated_at: string;
   items: OrderItem[];
 }
 
 export interface CreateOrderRequest extends BaseOrder {
-  items: OrderItem[];
+  items: Omit<OrderItem, 'id' | 'created_at' | 'updated_at'>[];
 }
 
 export interface FranchiseSettings {

@@ -1,95 +1,134 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
+import { supabase } from '../lib/supabase';
 import { useAuth } from './AuthContext';
-import { franchiseService } from '../services/franchiseService';
-import type { FranchiseSettings } from '../types';
+
+interface FranchiseSettings {
+  id: string;
+  name: string;
+  currency: string;
+  tax_rate: number;
+  address: string;
+  phone: string;
+  email: string;
+}
 
 interface FranchiseContextType {
   settings: FranchiseSettings | null;
   loading: boolean;
   error: string | null;
+  formatCurrency: (amount: number) => string;
 }
 
-const FranchiseContext = createContext<FranchiseContextType | undefined>(undefined);
+const FranchiseContext = createContext<FranchiseContextType>({
+  settings: null,
+  loading: true,
+  error: null,
+  formatCurrency: (amount: number) => `₹${amount.toFixed(2)}`
+});
+
+export const useFranchise = () => useContext(FranchiseContext);
 
 export function FranchiseProvider({ children }: { children: React.ReactNode }) {
-  const { profile, loading: authLoading } = useAuth();
   const [settings, setSettings] = useState<FranchiseSettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const { profile } = useAuth();
+
+  const formatCurrency = useCallback((amount: number): string => {
+    if (!settings || !settings.currency) {
+      return `₹${amount.toFixed(2)}`;
+    }
+
+    try {
+      return new Intl.NumberFormat('en-IN', {
+        style: 'currency',
+        currency: settings.currency,
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+      }).format(amount);
+    } catch (err) {
+      console.error('Error formatting currency:', err);
+      return `${settings.currency} ${amount.toFixed(2)}`;
+    }
+  }, [settings]);
 
   useEffect(() => {
-    let mounted = true;
-    let abortController = new AbortController();
-    
-    const loadFranchiseData = async () => {
+    let isMounted = true;
+
+    const fetchSettings = async () => {
+      if (!profile?.franchise_id) {
+        if (isMounted) {
+          setLoading(false);
+        }
+        return;
+      }
+
       try {
-        // Don't load franchise data if auth is still loading
-        if (authLoading) {
-          return;
-        }
+        const { data, error: fetchError } = await supabase
+          .from('franchise_settings')
+          .select('*')
+          .eq('id', profile.franchise_id)
+          .single();
 
-        if (!mounted) return;
+        if (!isMounted) return;
 
-        setLoading(true);
-        setError(null);
-        
-        const franchiseId = profile?.franchise_id;
-        
-        // Don't try to load data if we don't have a franchise ID
-        if (!franchiseId) {
-          if (mounted) {
-            setError('No franchise associated with your account');
-            setLoading(false);
+        if (fetchError) {
+          // If no settings exist, create default settings
+          if (fetchError.code === 'PGRST116') {
+            const { data: newSettings, error: createError } = await supabase
+              .from('franchise_settings')
+              .insert({
+                id: profile.franchise_id,
+                name: 'Default Franchise',
+                currency: 'INR',
+                tax_rate: 5.00
+              })
+              .select()
+              .single();
+
+            if (!isMounted) return;
+
+            if (createError) throw createError;
+            setSettings(newSettings);
+          } else {
+            throw fetchError;
           }
-          return;
+        } else {
+          if (isMounted) {
+            setSettings(data);
+          }
         }
-
-        const settingsData = await franchiseService.getFranchiseSettings(franchiseId);
-        
-        if (!mounted) return;
-        
-        setSettings(settingsData);
-        setLoading(false);
       } catch (err) {
-        if (!mounted) return;
-        
-        console.error('Error loading franchise data:', err);
+        if (!isMounted) return;
+        console.error('Error loading franchise settings:', err);
         setError(err instanceof Error ? err.message : 'Failed to load franchise settings');
-        setSettings(null);
       } finally {
-        if (mounted) {
+        if (isMounted) {
           setLoading(false);
         }
       }
     };
 
-    loadFranchiseData();
+    fetchSettings();
 
+    // Cleanup function
     return () => {
-      mounted = false;
-      abortController.abort();
+      isMounted = false;
     };
-  }, [profile?.franchise_id, authLoading]);
+  }, [profile?.franchise_id]);
 
-  const value = {
+  const contextValue = React.useMemo(() => ({
     settings,
     loading,
-    error
-  };
+    error,
+    formatCurrency
+  }), [settings, loading, error, formatCurrency]);
 
   return (
-    <FranchiseContext.Provider value={value}>
+    <FranchiseContext.Provider value={contextValue}>
       {children}
     </FranchiseContext.Provider>
   );
-}
-
-export function useFranchise() {
-  const context = useContext(FranchiseContext);
-  if (context === undefined) {
-    throw new Error('useFranchise must be used within a FranchiseProvider');
-  }
-  return context;
 }
 
 export default FranchiseProvider;
