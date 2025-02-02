@@ -6,8 +6,9 @@ import { OrderService } from '../services/orderService';
 import LoadingSpinner from '../components/LoadingSpinner';
 import OrderSidebar from '../components/OrderSidebar';
 import toast from 'react-hot-toast';
+import { formatDateTime, getTimeDifference } from '../utils/dateUtils';
 
-export default function Orders() {
+const Orders = () => {
   const { profile } = useAuth();
   const { formatCurrency } = useFranchise();
   const [orders, setOrders] = useState<Order[]>([]);
@@ -202,6 +203,55 @@ export default function Orders() {
                   </div>
 
                   <div className="border-b pb-4">
+                    <h3 className="font-medium mb-4">Order Timeline</h3>
+                    <div className="space-y-3">
+                      <div className="flex items-center text-sm">
+                        <div className="w-24 text-gray-600">Created:</div>
+                        <div>{formatDateTime(selectedOrder.created_at)}</div>
+                        <div className="ml-2 text-gray-500">
+                          ({getTimeDifference(selectedOrder.created_at)})
+                        </div>
+                      </div>
+                      {selectedOrder.preparing_at && (
+                        <div className="flex items-center text-sm">
+                          <div className="w-24 text-gray-600">Preparing:</div>
+                          <div>{formatDateTime(selectedOrder.preparing_at)}</div>
+                          <div className="ml-2 text-gray-500">
+                            (took {getTimeDifference(selectedOrder.preparing_at, selectedOrder.created_at)})
+                          </div>
+                        </div>
+                      )}
+                      {selectedOrder.ready_at && (
+                        <div className="flex items-center text-sm">
+                          <div className="w-24 text-gray-600">Ready:</div>
+                          <div>{formatDateTime(selectedOrder.ready_at)}</div>
+                          <div className="ml-2 text-gray-500">
+                            (took {getTimeDifference(selectedOrder.ready_at, selectedOrder.preparing_at)})
+                          </div>
+                        </div>
+                      )}
+                      {selectedOrder.served_at && (
+                        <div className="flex items-center text-sm">
+                          <div className="w-24 text-gray-600">Served:</div>
+                          <div>{formatDateTime(selectedOrder.served_at)}</div>
+                          <div className="ml-2 text-gray-500">
+                            (took {getTimeDifference(selectedOrder.served_at, selectedOrder.ready_at)})
+                          </div>
+                        </div>
+                      )}
+                      {selectedOrder.paid_at && (
+                        <div className="flex items-center text-sm">
+                          <div className="w-24 text-gray-600">Paid:</div>
+                          <div>{formatDateTime(selectedOrder.paid_at)}</div>
+                          <div className="ml-2 text-gray-500">
+                            (took {getTimeDifference(selectedOrder.paid_at, selectedOrder.served_at)})
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="border-b pb-4">
                     <h3 className="font-medium mb-4">Bill Details</h3>
                     <div className="space-y-2">
                       <div className="flex justify-between">
@@ -243,3 +293,5 @@ export default function Orders() {
     </div>
   );
 }
+
+export default Orders;

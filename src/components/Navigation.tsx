@@ -2,6 +2,8 @@ import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { UserRole } from '../types';
+import { LogOut } from 'lucide-react';
+import toast from 'react-hot-toast';
 
 interface NavItem {
   path: string;
@@ -56,12 +58,22 @@ const navItems: NavItem[] = [
 ];
 
 export default function Navigation() {
-  const { profile } = useAuth();
+  const { profile, signOut } = useAuth();
   const location = useLocation();
 
   if (!profile) return null;
 
   const allowedNavItems = navItems.filter(item => item.roles.includes(profile.role));
+
+  const handleSignOut = async () => {
+    try {
+      await signOut();
+      toast.success('Signed out successfully');
+    } catch (error) {
+      console.error('Error signing out:', error);
+      toast.error('Failed to sign out');
+    }
+  };
 
   return (
     <nav className="bg-white shadow-sm">
@@ -98,6 +110,13 @@ export default function Navigation() {
                   <span className="px-2 py-1 text-xs rounded-full bg-orange-100 text-orange-800 capitalize">
                     {profile.role}
                   </span>
+                  <button
+                    onClick={handleSignOut}
+                    className="inline-flex items-center px-3 py-2 text-sm font-medium text-red-600 hover:text-red-800 hover:bg-red-50 rounded-md transition-colors"
+                  >
+                    <LogOut className="w-4 h-4 mr-2" />
+                
+                  </button>
                 </div>
               </div>
             </div>

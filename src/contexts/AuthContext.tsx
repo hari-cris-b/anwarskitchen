@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback } fr
 import { User, Session } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
 import type { UserRole } from '../types';
+import { useNavigate } from 'react-router-dom';
 
 interface Profile {
   id: string;
@@ -41,6 +42,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
   const [initialized, setInitialized] = useState(false);
+  const navigate = useNavigate();
 
   const createProfile = useCallback(async (userId: string, userEmail: string): Promise<Profile | null> => {
     try {
@@ -230,6 +232,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setUser(null);
           setProfile(null);
           setSession(null);
+          navigate('/login');
         }
       } catch (error) {
         console.error('Error in initialization:', error);
@@ -265,6 +268,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setUser(null);
           setProfile(null);
           setSession(null);
+          navigate('/login');
           return;
         }
 
@@ -301,7 +305,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
       }
     };
-  }, [initialized]);
+  }, [initialized, navigate]);
 
   const signIn = useCallback(async (email: string, password: string): Promise<AuthResponse> => {
     try {
@@ -326,13 +330,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setLoading(true);
       const { error } = await supabase.auth.signOut();
       if (error) throw error;
+      
+      setUser(null);
+      setSession(null);
+      setProfile(null);
+      navigate('/login');
     } catch (error) {
-      console.error('Error in signOut:', error);
+      console.error('Error signing out:', error);
       throw error;
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [navigate]);
 
   const value = {
     user,

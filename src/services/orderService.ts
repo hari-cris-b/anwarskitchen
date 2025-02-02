@@ -1,8 +1,15 @@
 import { supabase } from '../lib/supabase';
 import { Order, CreateOrderRequest } from '../types';
 
-export class OrderService {
-  static async getOrders(franchiseId: string): Promise<Order[]> {
+const getCurrentTimestamp = () => {
+  // Get current time in IST
+  const now = new Date();
+  const istTime = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+  return istTime.toISOString();
+};
+
+export const OrderService = {
+  async getOrders(franchiseId: string): Promise<Order[]> {
     const { data, error } = await supabase
       .from('orders')
       .select(`
@@ -12,12 +19,14 @@ export class OrderService {
       .eq('franchise_id', franchiseId)
       .order('created_at', { ascending: false });
 
-    if (error) throw new Error(error.message);
-    return (data as Order[]) || [];
-  }
+    if (error) throw error;
+    return data || [];
+  },
 
-  static async placeOrder(orderRequest: CreateOrderRequest): Promise<Order> {
-    // Create the order
+  async placeOrder(orderRequest: CreateOrderRequest): Promise<Order> {
+    const timestamp = getCurrentTimestamp();
+    
+    // Create the order with proper timestamps
     const { data: order, error: orderError } = await supabase
       .from('orders')
       .insert({
@@ -31,12 +40,15 @@ export class OrderService {
         tax: orderRequest.tax,
         total: orderRequest.total,
         discount: orderRequest.discount || 0,
-        additional_charges: orderRequest.additional_charges || 0
+        additional_charges: orderRequest.additional_charges || 0,
+        created_at: timestamp,
+        updated_at: timestamp,
+        pending_at: timestamp
       })
       .select()
       .single();
 
-    if (orderError) throw new Error(orderError.message);
+    if (orderError) throw orderError;
     if (!order) throw new Error('Failed to create order');
 
     // Insert order items
@@ -54,7 +66,7 @@ export class OrderService {
         }))
       );
 
-    if (itemsError) throw new Error(itemsError.message);
+    if (itemsError) throw itemsError;
 
     // Fetch the complete order with items
     const { data: completeOrder, error: fetchError } = await supabase
@@ -66,27 +78,51 @@ export class OrderService {
       .eq('id', order.id)
       .single();
 
-    if (fetchError) throw new Error(fetchError.message);
+    if (fetchError) throw fetchError;
     if (!completeOrder) throw new Error('Failed to fetch complete order');
 
     return completeOrder as Order;
-  }
+  },
 
-  static async updateOrderStatus(orderId: string, status: Order['status']): Promise<void> {
+  async updateOrderStatus(orderId: string, status: Order['status']): Promise<void> {
+    const timestamp = getCurrentTimestamp();
+    
+    const updates: any = {
+      status,
+      updated_at: timestamp
+    };
+
+    // Add timestamp for the specific status
+    updates[`${status}_at`] = timestamp;
+
     const { error } = await supabase
       .from('orders')
-      .update({ status })
+      .update(updates)
       .eq('id', orderId);
 
-    if (error) throw new Error(error.message);
-  }
+    if (error) throw error;
+  },
 
-  static async updatePaymentStatus(orderId: string, payment_status: Order['payment_status']): Promise<void> {
+  async updatePaymentStatus(orderId: string, paymentStatus: Order['payment_status'], paymentMethod?: string): Promise<void> {
+    const timestamp = getCurrentTimestamp();
+    
+    const updates: any = {
+      payment_status: paymentStatus,
+      updated_at: timestamp
+    };
+
+    if (paymentStatus === 'paid') {
+      updates.paid_at = timestamp;
+      if (paymentMethod) {
+        updates.payment_method = paymentMethod;
+      }
+    }
+
     const { error } = await supabase
       .from('orders')
-      .update({ payment_status })
+      .update(updates)
       .eq('id', orderId);
 
-    if (error) throw new Error(error.message);
+    if (error) throw error;
   }
-}
+};

@@ -41,7 +41,12 @@ CREATE TABLE IF NOT EXISTS orders (
     additional_charges DECIMAL(10,2) NOT NULL DEFAULT 0.00,
     total DECIMAL(10,2) NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    pending_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    preparing_at TIMESTAMP,
+    ready_at TIMESTAMP,
+    served_at TIMESTAMP,
+    paid_at TIMESTAMP
 );
 
 -- Create order items table
@@ -73,6 +78,11 @@ COMMENT ON TABLE franchise_settings IS 'Stores settings for each franchise';
 -- Add column comments for the adjustment fields
 COMMENT ON COLUMN orders.discount IS 'The discount amount applied to the order';
 COMMENT ON COLUMN orders.additional_charges IS 'Any additional charges applied to the order';
+COMMENT ON COLUMN orders.pending_at IS 'Timestamp when order was created';
+COMMENT ON COLUMN orders.preparing_at IS 'Timestamp when kitchen started preparing the order';
+COMMENT ON COLUMN orders.ready_at IS 'Timestamp when order was ready for service';
+COMMENT ON COLUMN orders.served_at IS 'Timestamp when order was served to customer';
+COMMENT ON COLUMN orders.paid_at IS 'Timestamp when order was paid';
 
 -- Add RLS policies
 ALTER TABLE orders ENABLE ROW LEVEL SECURITY;

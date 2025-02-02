@@ -74,6 +74,12 @@ export interface Order extends BaseOrder {
   created_at: string;
   updated_at: string;
   items: OrderItem[];
+  pending_at: string;
+  preparing_at: string | null;
+  ready_at: string | null;
+  served_at: string | null;
+  paid_at: string | null;
+  cancelled_at?: string | null;
 }
 
 export interface CreateOrderRequest extends BaseOrder {

@@ -1,11 +1,11 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { Order } from '../types';
 import { OrderService } from '../services/orderService';
 import LoadingSpinner from '../components/LoadingSpinner';
-import ErrorAlert from '../components/ErrorAlert';
 import OrderSidebar from '../components/OrderSidebar';
 import toast from 'react-hot-toast';
+import { formatDateTime, getTimeDifference } from '../utils/dateUtils';
 
 export default function Kitchen() {
   const { profile } = useAuth();
@@ -13,6 +13,7 @@ export default function Kitchen() {
   const [selectedOrderId, setSelectedOrderId] = useState<string>();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const mountedRef = useRef(true);
 
   // Filter orders to only show pending and preparing orders
   const kitchenOrders = useMemo(() => 
@@ -20,83 +21,90 @@ export default function Kitchen() {
     [orders]
   );
 
-  const selectedOrder = orders.find(order => order.id === selectedOrderId);
+  const selectedOrder = useMemo(() => 
+    orders.find(order => order.id === selectedOrderId),
+    [orders, selectedOrderId]
+  );
 
   const fetchOrders = useCallback(async () => {
-    if (!profile?.franchise_id) return;
+    if (!profile?.franchise_id || !mountedRef.current) return;
 
     try {
-      setLoading(true);
-      setError(null);
       const fetchedOrders = await OrderService.getOrders(profile.franchise_id);
-      setOrders(fetchedOrders);
+      if (mountedRef.current) {
+        setOrders(fetchedOrders);
+        
+        // If selected order is no longer in kitchen orders, clear selection
+        if (selectedOrderId && !fetchedOrders.some(order => 
+          order.id === selectedOrderId && 
+          (order.status === 'pending' || order.status === 'preparing')
+        )) {
+          setSelectedOrderId(undefined);
+        }
+      }
     } catch (err) {
-      console.error('Error fetching orders:', err);
-      setError(err instanceof Error ? err.message : 'Failed to fetch orders');
-      toast.error('Failed to fetch orders');
+      if (mountedRef.current) {
+        console.error('Error fetching orders:', err);
+        setError(err instanceof Error ? err.message : 'Failed to fetch orders');
+        toast.error('Failed to fetch orders');
+      }
     } finally {
-      setLoading(false);
+      if (mountedRef.current) {
+        setLoading(false);
+      }
     }
-  }, [profile?.franchise_id]);
+  }, [profile?.franchise_id, selectedOrderId]);
 
   useEffect(() => {
-    let mounted = true;
-    
+    // Reset mounted ref on mount
+    mountedRef.current = true;
+
     const loadOrders = async () => {
-      if (!profile?.franchise_id) {
-        if (mounted) {
-          setLoading(false);
-        }
+      if (!profile?.franchise_id || !mountedRef.current) {
+        setLoading(false);
         return;
       }
 
-      try {
-        const fetchedOrders = await OrderService.getOrders(profile.franchise_id);
-        if (mounted) {
-          setOrders(fetchedOrders);
-        }
-      } catch (err) {
-        console.error('Error fetching orders:', err);
-        if (mounted) {
-          setError(err instanceof Error ? err.message : 'Failed to fetch orders');
-          toast.error('Failed to fetch orders');
-        }
-      } finally {
-        if (mounted) {
-          setLoading(false);
-        }
-      }
+      await fetchOrders();
     };
 
     loadOrders();
 
     // Set up polling for kitchen orders
-    const interval = setInterval(loadOrders, 30000); // Refresh every 30 seconds
+    const intervalId = setInterval(fetchOrders, 30000); // Refresh every 30 seconds
 
+    // Cleanup function
     return () => {
-      mounted = false;
-      clearInterval(interval);
+      mountedRef.current = false;
+      clearInterval(intervalId);
     };
-  }, [profile?.franchise_id]);
+  }, [profile?.franchise_id, fetchOrders]);
 
   const handleStatusUpdate = useCallback(async (orderId: string, status: Order['status']) => {
+    if (!mountedRef.current) return;
+
     try {
       await OrderService.updateOrderStatus(orderId, status);
-      setOrders(prevOrders => 
-        prevOrders.map(order => 
-          order.id === orderId ? { ...order, status } : order
-        )
-      );
       
-      // Clear selection when order is marked as ready
-      if (status === 'ready') {
-        setSelectedOrderId(undefined);
+      if (mountedRef.current) {
+        setOrders(prevOrders => 
+          prevOrders.map(order => 
+            order.id === orderId ? { ...order, status } : order
+          )
+        );
+
+        // Clear selection when order is marked as ready
+        if (status === 'ready') {
+          setSelectedOrderId(undefined);
+        }
+
+        toast.success(`Order status updated to ${status}`);
       }
-      
-      toast.success(`Order status updated to ${status}`);
     } catch (err) {
-      console.error('Error updating order status:', err);
-      toast.error('Failed to update order status');
+      if (mountedRef.current) {
+        console.error('Error updating order status:', err);
+        toast.error('Failed to update order status');
+      }
     }
   }, []);
 
@@ -165,33 +173,50 @@ export default function Kitchen() {
                               Quantity: {item.quantity}
                             </p>
                           </div>
-                          <p className="text-gray-900">
-                            ${(item.price * item.quantity).toFixed(2)}
-                          </p>
                         </div>
                       ))}
                     </div>
                   </div>
 
                   <div className="border-b pb-4">
-                    <h3 className="font-medium mb-4">Order Details</h3>
-                    <div className="grid grid-cols-2 gap-4 text-sm">
-                      <div>
-                        <p className="text-gray-600">Status</p>
-                        <p className={`font-medium capitalize ${
-                          selectedOrder.status === 'ready' ? 'text-green-600' :
-                          selectedOrder.status === 'preparing' ? 'text-blue-600' :
-                          'text-gray-900'
-                        }`}>
-                          {selectedOrder.status}
-                        </p>
+                    <h3 className="font-medium mb-4">Order Status</h3>
+                    <p className={`text-lg font-medium capitalize ${
+                      selectedOrder.status === 'preparing' ? 'text-blue-600' :
+                      selectedOrder.status === 'pending' ? 'text-yellow-600' :
+                      'text-gray-600'
+                    }`}>
+                      {selectedOrder.status}
+                    </p>
+                  </div>
+
+                  <div className="border-b pb-4">
+                    <h3 className="font-medium mb-4">Order Timeline</h3>
+                    <div className="space-y-3">
+                      <div className="flex items-center text-sm">
+                        <div className="w-24 text-gray-600">Created:</div>
+                        <div>{formatDateTime(selectedOrder.created_at)}</div>
+                        <div className="ml-2 text-gray-500">
+                          ({getTimeDifference(selectedOrder.created_at)})
+                        </div>
                       </div>
-                      <div>
-                        <p className="text-gray-600">Created At</p>
-                        <p className="font-medium">
-                          {new Date(selectedOrder.created_at).toLocaleString()}
-                        </p>
-                      </div>
+                      {selectedOrder.preparing_at && (
+                        <div className="flex items-center text-sm">
+                          <div className="w-24 text-gray-600">Preparing:</div>
+                          <div>{formatDateTime(selectedOrder.preparing_at)}</div>
+                          <div className="ml-2 text-gray-500">
+                            (took {getTimeDifference(selectedOrder.preparing_at, selectedOrder.created_at)})
+                          </div>
+                        </div>
+                      )}
+                      {selectedOrder.ready_at && (
+                        <div className="flex items-center text-sm">
+                          <div className="w-24 text-gray-600">Ready:</div>
+                          <div>{formatDateTime(selectedOrder.ready_at)}</div>
+                          <div className="ml-2 text-gray-500">
+                            (took {getTimeDifference(selectedOrder.ready_at, selectedOrder.preparing_at)})
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
