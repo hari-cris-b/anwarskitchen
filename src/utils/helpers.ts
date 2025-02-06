@@ -26,8 +26,12 @@ export const getStatusColor = (status: OrderStatus): { bg: string; text: string 
       return { bg: 'bg-yellow-100', text: 'text-yellow-800' };
     case 'ready':
       return { bg: 'bg-green-100', text: 'text-green-800' };
-    case 'completed':
-      return { bg: 'bg-gray-100', text: 'text-gray-800' };
+    case 'served':
+      return { bg: 'bg-purple-100', text: 'text-purple-800' };
+    case 'cancelled':
+      return { bg: 'bg-red-100', text: 'text-red-800' };
+    default:
+      return { bg: 'bg-gray-100', text: 'text-gray-800' }; // Default case for any unknown status
   }
 };
 

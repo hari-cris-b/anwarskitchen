@@ -1,234 +1,240 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { Order } from '../types';
 import { OrderService } from '../services/orderService';
+import { PrintService } from '../services/printService';
 import LoadingSpinner from '../components/LoadingSpinner';
-import OrderSidebar from '../components/OrderSidebar';
-import toast from 'react-hot-toast';
 import { formatDateTime, getTimeDifference } from '../utils/dateUtils';
+import { Filter, SlidersHorizontal, Printer } from 'lucide-react';
+import toast from 'react-hot-toast';
 
 export default function Kitchen() {
   const { profile } = useAuth();
   const [orders, setOrders] = useState<Order[]>([]);
-  const [selectedOrderId, setSelectedOrderId] = useState<string>();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const mountedRef = useRef(true);
-
-  // Filter orders to only show pending and preparing orders
-  const kitchenOrders = useMemo(() => 
-    orders.filter(order => order.status === 'pending' || order.status === 'preparing'),
-    [orders]
-  );
-
-  const selectedOrder = useMemo(() => 
-    orders.find(order => order.id === selectedOrderId),
-    [orders, selectedOrderId]
-  );
+  const [statusFilter, setStatusFilter] = useState<Order['status'] | 'all'>('all');
+  const [groupByStatus, setGroupByStatus] = useState(false);
 
   const fetchOrders = useCallback(async () => {
-    if (!profile?.franchise_id || !mountedRef.current) return;
+    if (!profile?.franchise_id) return;
 
     try {
+      setLoading(true);
+      setError(null);
       const fetchedOrders = await OrderService.getOrders(profile.franchise_id);
-      if (mountedRef.current) {
-        setOrders(fetchedOrders);
-        
-        // If selected order is no longer in kitchen orders, clear selection
-        if (selectedOrderId && !fetchedOrders.some(order => 
-          order.id === selectedOrderId && 
-          (order.status === 'pending' || order.status === 'preparing')
-        )) {
-          setSelectedOrderId(undefined);
-        }
-      }
+      setOrders(fetchedOrders);
     } catch (err) {
-      if (mountedRef.current) {
-        console.error('Error fetching orders:', err);
-        setError(err instanceof Error ? err.message : 'Failed to fetch orders');
-        toast.error('Failed to fetch orders');
-      }
+      console.error('Error fetching orders:', err);
+      setError(err instanceof Error ? err.message : 'Failed to fetch orders');
+      toast.error('Failed to fetch orders');
     } finally {
-      if (mountedRef.current) {
-        setLoading(false);
-      }
+      setLoading(false);
     }
-  }, [profile?.franchise_id, selectedOrderId]);
+  }, [profile?.franchise_id]);
 
   useEffect(() => {
-    // Reset mounted ref on mount
-    mountedRef.current = true;
-
+    let mounted = true;
+    
     const loadOrders = async () => {
-      if (!profile?.franchise_id || !mountedRef.current) {
-        setLoading(false);
+      if (!profile?.franchise_id) {
+        if (mounted) {
+          setLoading(false);
+        }
         return;
       }
 
-      await fetchOrders();
+      try {
+        const fetchedOrders = await OrderService.getOrders(profile.franchise_id);
+        if (mounted) {
+          setOrders(fetchedOrders);
+        }
+      } catch (err) {
+        console.error('Error fetching orders:', err);
+        if (mounted) {
+          setError(err instanceof Error ? err.message : 'Failed to fetch orders');
+          toast.error('Failed to fetch orders');
+        }
+      } finally {
+        if (mounted) {
+          setLoading(false);
+        }
+      }
     };
 
     loadOrders();
 
     // Set up polling for kitchen orders
-    const intervalId = setInterval(fetchOrders, 30000); // Refresh every 30 seconds
+    const intervalId = setInterval(loadOrders, 10000); // Refresh every 10 seconds
 
-    // Cleanup function
     return () => {
-      mountedRef.current = false;
+      mounted = false;
       clearInterval(intervalId);
     };
-  }, [profile?.franchise_id, fetchOrders]);
+  }, [profile?.franchise_id]);
 
-  const handleStatusUpdate = useCallback(async (orderId: string, status: Order['status']) => {
-    if (!mountedRef.current) return;
-
+  const handleStatusUpdate = async (orderId: string, status: Order['status']) => {
     try {
       await OrderService.updateOrderStatus(orderId, status);
-      
-      if (mountedRef.current) {
-        setOrders(prevOrders => 
-          prevOrders.map(order => 
-            order.id === orderId ? { ...order, status } : order
-          )
-        );
-
-        // Clear selection when order is marked as ready
-        if (status === 'ready') {
-          setSelectedOrderId(undefined);
-        }
-
-        toast.success(`Order status updated to ${status}`);
-      }
+      toast.success(`Order status updated to ${status}`);
+      fetchOrders();
     } catch (err) {
-      if (mountedRef.current) {
-        console.error('Error updating order status:', err);
-        toast.error('Failed to update order status');
-      }
+      console.error('Error updating order status:', err);
+      toast.error('Failed to update order status');
     }
-  }, []);
+  };
 
-  if (loading) {
-    return <LoadingSpinner />;
-  }
+  
+  const filteredOrders = orders.filter(order => {
+    const statusMatch = statusFilter === 'all' ? true : order.status === statusFilter;
+    // Only show relevant orders for kitchen
+    const isKitchenOrder = ['pending', 'preparing'].includes(order.status);
+    return statusMatch && isKitchenOrder;
+  })
+  // ?.filter(order => order.status !== 'ready' && order.status !== 'completed')
+  .sort((a) => (a.status === 'pending' ? -1 : 1)); // Sort to show pending orders first
 
-  if (error) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <p className="text-red-500">{error}</p>
-      </div>
-    );
-  }
+  // Sort orders by status
+  const groupedOrders = groupByStatus
+    ? filteredOrders.reduce((acc, order) => {
+        if (!acc[order.status]) {
+          acc[order.status] = [];
+        }
+        acc[order.status].push(order);
+        return acc;
+      }, {} as Record<Order['status'], Order[]>)
+    : { all: filteredOrders };
+
+  const kitchenStatuses: Order['status'][] = ['pending', 'preparing', 'ready'];
 
   return (
-    <div className="flex h-[calc(100vh-4rem)]">
-      <OrderSidebar
-        orders={kitchenOrders}
-        selectedOrderId={selectedOrderId}
-        onSelectOrder={setSelectedOrderId}
-      />
-      
-      <div className="flex-1 overflow-hidden">
-        {selectedOrder ? (
-          <div className="h-full flex flex-col p-6">
-            <div className="flex justify-between items-center mb-6">
-              <div>
-                <h2 className="text-2xl font-bold">
-                  Table {selectedOrder.table_number}
-                </h2>
-                <p className="text-sm text-gray-600">
-                  Server: {selectedOrder.server_name}
-                </p>
-              </div>
-              <div className="flex gap-2">
-                {selectedOrder.status === 'pending' ? (
-                  <button
-                    onClick={() => handleStatusUpdate(selectedOrder.id, 'preparing')}
-                    className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
-                  >
-                    Start Preparing
-                  </button>
-                ) : selectedOrder.status === 'preparing' && (
-                  <button
-                    onClick={() => handleStatusUpdate(selectedOrder.id, 'ready')}
-                    className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700"
-                  >
-                    Mark as Ready
-                  </button>
-                )}
-              </div>
-            </div>
+    <div className="container mx-auto px-4 py-8">
+      <div className="flex justify-between items-center mb-6">
+        <h1 className="text-2xl font-bold">Kitchen Orders</h1>
+        <div className="flex items-center space-x-4">
+          <div className="flex items-center space-x-2">
+            <Filter className="w-4 h-4 text-gray-500" />
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value as Order['status'] | 'all')}
+              className="text-sm border rounded-md px-2 py-1"
+            >
+              <option value="all">All Statuses</option>
+              {kitchenStatuses.map(status => (
+                <option key={status} value={status}>
+                  {status.charAt(0).toUpperCase() + status.slice(1)}
+                </option>
+              ))}
+            </select>
+          </div>
+          <button
+            onClick={() => setGroupByStatus(!groupByStatus)}
+            className={`flex items-center space-x-1 px-2 py-1 rounded-md text-sm ${
+              groupByStatus ? 'bg-blue-50 text-blue-600' : 'text-gray-600 hover:bg-gray-50'
+            }`}
+          >
+            <SlidersHorizontal className="w-4 h-4" />
+            <span>Group</span>
+          </button>
+        </div>
+      </div>
 
-            <div className="flex-1 overflow-y-auto">
-              <div className="bg-white rounded-lg shadow-sm p-6">
-                <div className="space-y-6">
-                  <div className="border-b pb-4">
-                    <h3 className="font-medium mb-4">Order Items</h3>
-                    <div className="space-y-4">
-                      {selectedOrder.items?.map(item => (
-                        <div key={item.id} className="flex justify-between items-center">
+      {loading ? (
+        <LoadingSpinner />
+      ) : error ? (
+        <div className="text-red-600">{error}</div>
+      ) : filteredOrders.length === 0 ? (
+        <div className="text-gray-500">No orders found</div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {Object.entries(groupedOrders).map(([status, statusOrders]) => (
+            <React.Fragment key={status}>
+              {groupByStatus && (
+                <div className="col-span-full bg-gray-50 px-4 py-2 text-sm font-medium text-gray-600 rounded-md">
+                  {status.charAt(0).toUpperCase() + status.slice(1)}
+                  <span className="ml-2 text-gray-400">({statusOrders.length})</span>
+                </div>
+              )}
+              {statusOrders.map(order => (
+                <div
+                  key={order.id}
+                  className="bg-white rounded-lg shadow-sm overflow-hidden"
+                >
+                  <div className="p-4">
+                    <div className="flex justify-between items-start mb-4">
+                      <div>
+                        <h3 className="font-medium">Table {order.table_number}</h3>
+                        <p className="text-sm text-gray-500">
+                          {formatDateTime(order.created_at)}
+                          <span className="ml-2">
+                            ({getTimeDifference(order.created_at)})
+                          </span>
+                        </p>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <button
+                          onClick={() => {
+                            PrintService.printKOT(order)
+                              .then(() => toast.success('KOT printed successfully'))
+                              .catch(err => {
+                                console.error('Error printing KOT:', err);
+                                toast.error('Failed to print KOT');
+                              });
+                          }}
+                          className="p-1.5 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-full"
+                          title="Print KOT"
+                        >
+                          <Printer className="w-4 h-4" />
+                        </button>
+                        <div className={`px-2 py-1 rounded-full text-sm ${
+                          order.status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
+                          order.status === 'preparing' ? 'bg-blue-100 text-blue-800' :
+                          'bg-green-100 text-green-800'
+                        }`}>
+                          {order.status}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-3 mb-4">
+                      {order.items?.map((item, index) => (
+                        <div key={index} className="flex justify-between items-start">
                           <div>
-                            <p className="font-medium">{item.name}</p>
-                            <p className="text-sm text-gray-600">
-                              Quantity: {item.quantity}
-                            </p>
+                            <div className="font-medium">{item.name}</div>
+                            <div className="text-sm text-gray-600">x{item.quantity}</div>
+                            {item.notes && (
+                              <div className="text-sm text-gray-500 mt-1">{item.notes}</div>
+                            )}
                           </div>
                         </div>
                       ))}
                     </div>
-                  </div>
 
-                  <div className="border-b pb-4">
-                    <h3 className="font-medium mb-4">Order Status</h3>
-                    <p className={`text-lg font-medium capitalize ${
-                      selectedOrder.status === 'preparing' ? 'text-blue-600' :
-                      selectedOrder.status === 'pending' ? 'text-yellow-600' :
-                      'text-gray-600'
-                    }`}>
-                      {selectedOrder.status}
-                    </p>
-                  </div>
-
-                  <div className="border-b pb-4">
-                    <h3 className="font-medium mb-4">Order Timeline</h3>
-                    <div className="space-y-3">
-                      <div className="flex items-center text-sm">
-                        <div className="w-24 text-gray-600">Created:</div>
-                        <div>{formatDateTime(selectedOrder.created_at)}</div>
-                        <div className="ml-2 text-gray-500">
-                          ({getTimeDifference(selectedOrder.created_at)})
-                        </div>
-                      </div>
-                      {selectedOrder.preparing_at && (
-                        <div className="flex items-center text-sm">
-                          <div className="w-24 text-gray-600">Preparing:</div>
-                          <div>{formatDateTime(selectedOrder.preparing_at)}</div>
-                          <div className="ml-2 text-gray-500">
-                            (took {getTimeDifference(selectedOrder.preparing_at, selectedOrder.created_at)})
-                          </div>
-                        </div>
+                    <div className="flex justify-end space-x-2">
+                      {order.status === 'pending' && (
+                        <button
+                          onClick={() => handleStatusUpdate(order.id, 'preparing')}
+                          className="px-3 py-1 bg-blue-600 text-white rounded-md text-sm hover:bg-blue-700"
+                        >
+                          Start Preparing
+                        </button>
                       )}
-                      {selectedOrder.ready_at && (
-                        <div className="flex items-center text-sm">
-                          <div className="w-24 text-gray-600">Ready:</div>
-                          <div>{formatDateTime(selectedOrder.ready_at)}</div>
-                          <div className="ml-2 text-gray-500">
-                            (took {getTimeDifference(selectedOrder.ready_at, selectedOrder.preparing_at)})
-                          </div>
-                        </div>
+                      {order.status === 'preparing' && (
+                        <button
+                          onClick={() => handleStatusUpdate(order.id, 'ready')}
+                          className="px-3 py-1 bg-green-600 text-white rounded-md text-sm hover:bg-green-700"
+                        >
+                          Mark Ready
+                        </button>
                       )}
                     </div>
                   </div>
                 </div>
-              </div>
-            </div>
-          </div>
-        ) : (
-          <div className="h-full flex items-center justify-center">
-            <p className="text-gray-500">Select an order to view details</p>
-          </div>
-        )}
-      </div>
+              ))}
+            </React.Fragment>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

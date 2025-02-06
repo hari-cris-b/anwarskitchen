@@ -83,7 +83,7 @@ export interface Profile {
   updated_at: string;
 }
 
-export type PaymentMethod = 'cash' | 'card';
-export type PaymentStatus = 'paid' | 'unpaid';
-export type OrderStatus = 'pending' | 'preparing' | 'ready' | 'completed';
-export type UserRole = 'staff' | 'manager';
+export type PaymentMethod = 'cash' | 'card' | 'upi';
+export type PaymentStatus = 'pending' | 'completed' | 'cancelled';
+export type OrderStatus = 'pending' | 'preparing' | 'ready' | 'served' | 'cancelled';
+export type UserRole = 'admin' | 'manager' | 'staff';

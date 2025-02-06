@@ -8,10 +8,30 @@ interface Profile {
   id: string;
   email: string;
   franchise_id: string;
-  role: UserRole;  
+  role: UserRole;
+  full_name: string | null;
   created_at: string;
   updated_at: string;
-  full_name?: string;
+  phone: string | null;
+  is_active: boolean;
+  joining_date: string | null;
+  salary: number | null;
+  shift: 'morning' | 'evening' | 'night' | null;
+}
+
+interface GetUserProfileResponse {
+  id: string;
+  email: string;
+  franchise_id: string;
+  role: UserRole;
+  full_name: string | null;
+  created_at: string;
+  updated_at: string;
+  phone: string | null;
+  is_active: boolean;
+  joining_date: string | null;
+  salary: number | null;
+  shift: 'morning' | 'evening' | 'night' | null;
 }
 
 type AuthResponse = {
@@ -121,21 +141,38 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const fetchProfile = useCallback(async (userId: string, userEmail: string): Promise<Profile | null> => {
     try {
-      const { data: profile, error } = await supabaseAdmin
-        .from('profiles')
-        .select('*')
-        .eq('id', userId)
-        .maybeSingle();
+      const { data, error } = await supabase
+        .rpc('get_user_profile', { user_id: userId })
+        .returns<GetUserProfileResponse>();
 
       if (error) {
         console.error('Error fetching profile:', error);
         return null;
       }
 
+      // RPC returns an array, get the first item
+      const profile = Array.isArray(data) ? data[0] : null;
+
       if (!profile) {
         console.log('No profile found, creating one...');
         return await createProfile(userId, userEmail);
       }
+
+      // Convert to Profile type
+      const formattedProfile: Profile = {
+        id: profile.id,
+        email: profile.email,
+        franchise_id: profile.franchise_id,
+        role: profile.role as UserRole,
+        full_name: profile.full_name,
+        created_at: profile.created_at,
+        updated_at: profile.updated_at,
+        phone: profile.phone,
+        is_active: profile.is_active,
+        joining_date: profile.joining_date,
+        salary: profile.salary,
+        shift: profile.shift
+      };
 
       // Handle case where profile exists but has no franchise_id
       if (!profile.franchise_id && profile.role === 'admin') {

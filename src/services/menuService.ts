@@ -44,11 +44,7 @@ export class MenuService {
   static async getMenuItems(franchiseId: string): Promise<MenuItem[]> {
     try {
       const { data, error } = await supabase
-        .from('menu_items')
-        .select('*')
-        .eq('franchise_id', franchiseId)
-        .eq('is_active', true)
-        .order('name');
+        .rpc('get_franchise_menu_items', { franchise_id_param: franchiseId });
 
       if (error) throw error;
       
@@ -58,11 +54,7 @@ export class MenuService {
         
         // Try to fetch again after initialization
         const { data: newData, error: retryError } = await supabase
-          .from('menu_items')
-          .select('*')
-          .eq('franchise_id', franchiseId)
-          .eq('is_active', true)
-          .order('name');
+          .rpc('get_franchise_menu_items', { franchise_id_param: franchiseId });
           
         if (retryError) throw retryError;
         return newData || [];

@@ -64,6 +64,15 @@ export function FranchiseProvider({ children }: { children: React.ReactNode }) {
       }
 
       try {
+        // Use get_user_profile to verify franchise access first
+        const { data: profileData, error: profileError } = await supabase
+          .rpc('get_user_profile', { user_id: profile.id });
+
+        if (!isMounted) return;
+
+        if (profileError) throw profileError;
+
+        // If profile access is verified, get franchise settings
         const { data, error: fetchError } = await supabase
           .from('franchise_settings')
           .select('*')
@@ -111,11 +120,10 @@ export function FranchiseProvider({ children }: { children: React.ReactNode }) {
 
     fetchSettings();
 
-    // Cleanup function
     return () => {
       isMounted = false;
     };
-  }, [profile?.franchise_id]);
+  }, [profile?.franchise_id, profile?.id]);
 
   const contextValue = React.useMemo(() => ({
     settings,

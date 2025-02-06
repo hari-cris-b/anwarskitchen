@@ -14,7 +14,7 @@ export default function POS() {
   
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
-  const [selectedCategory, setSelectedCategory] = useState<string>('all');
+  const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [cart, setCart] = useState<CartItem[]>([]);
   const [tableNumber, setTableNumber] = useState<string>('');
   const [loading, setLoading] = useState(true);
@@ -56,7 +56,7 @@ export default function POS() {
           setMenuItems(menuData);
           // Extract unique categories
           const uniqueCategories = Array.from(new Set(menuData.map(item => item.category)));
-          setCategories(['all', ...uniqueCategories]);
+          setCategories(['All', ...uniqueCategories]);
           setLoading(false);
         }
       } catch (err) {
@@ -190,7 +190,7 @@ export default function POS() {
     return <ErrorAlert message={error || franchiseError || 'An error occurred'} />;
   }
 
-  const filteredItems = selectedCategory === 'all'
+  const filteredItems = selectedCategory === 'All'
     ? menuItems
     : menuItems.filter(item => item.category === selectedCategory);
 
@@ -200,8 +200,8 @@ export default function POS() {
     <div className="h-[calc(100vh-4rem)] flex">
       {/* Menu Section */}
       <div className="w-2/3 bg-gray-50 p-6 overflow-hidden flex flex-col">
-        {/* Categories */}
-        <div className="flex gap-2 mb-6 overflow-x-auto pb-2">
+        {/* Categories with Smooth Scroll */}
+        <div className="flex gap-2 mb-6 overflow-x-auto pb-2 scrollbar-thin scrollbar-thumb-orange-400 scrollbar-track-transparent -mx-6 px-6">
           {categories.map((category) => (
             <button
               key={category}
@@ -218,7 +218,8 @@ export default function POS() {
         </div>
 
         {/* Menu Items Grid */}
-        <div className="flex-1 overflow-y-auto">
+        {/* <div className="flex-1 overflow-y-auto"> */}
+        <div className="flex-1 gap-2 mb-6 overflow-y-auto pb-2 scrollbar-thin scrollbar-thumb-orange-400 scrollbar-track-transparent -mx-6 px-6">
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
             {filteredItems.map((item) => (
               <button
@@ -257,7 +258,9 @@ export default function POS() {
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-6">
+        {/* <div className="flex-1 overflow-y-auto p-6"> */}
+        <div className="flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-orange-400 scrollbar-track-transparent p-6">
+
           {cart.length === 0 ? (
             <div className="text-center text-gray-500 mt-8">
               No items in cart
@@ -306,7 +309,7 @@ export default function POS() {
               onClick={() => setShowAdjustments(!showAdjustments)}
             >
               <span>Adjustments</span>
-              <span>{showAdjustments ? '▼' : '▶'}</span>
+              <span>{showAdjustments ? '▽' : '△'}</span>
             </button>
 
             {showAdjustments && (

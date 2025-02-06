@@ -6,23 +6,40 @@ import ProtectedRoute from './components/ProtectedRoute';
 import RoleBasedRoute from './components/RoleBasedRoute';
 import Navigation from './components/Navigation';
 import LoadingSpinner from './components/LoadingSpinner';
-import Login from './pages/Login';
-import POS from './pages/POS';
-import Kitchen from './pages/Kitchen';
-import Orders from './pages/Orders';
-import Menu from './pages/Menu';
-import Reports from './pages/Reports';
-import Settings from './pages/Settings';
-import Staff from './pages/Staff';
-import Profile from './pages/Profile';
-import Unauthorized from './pages/Unauthorized';
-import FranchiseProvider from './contexts/FranchiseContext';
+import { Suspense, lazy } from 'react';
+import { FranchiseProvider } from './contexts/FranchiseContext';
+import ErrorBoundary from './components/ErrorBoundary';
+import { initializePerformanceMonitoring } from './utils/performance';
+
+// Lazy load route components
+const Login = lazy(() => import('./pages/Login'));
+const POS = lazy(() => import('./pages/POS'));
+const Kitchen = lazy(() => import('./pages/Kitchen'));
+const Orders = lazy(() => import('./pages/Orders'));
+const Menu = lazy(() => import('./pages/Menu'));
+const Reports = lazy(() => import('./pages/Reports'));
+const Settings = lazy(() => import('./pages/Settings'));
+const Staff = lazy(() => import('./pages/Staff'));
+const Profile = lazy(() => import('./pages/Profile'));
+const Unauthorized = lazy(() => import('./pages/Unauthorized'));
+
+// Loading fallback component
+const PageLoader = () => (
+  <div className="h-screen flex items-center justify-center">
+    <LoadingSpinner />
+  </div>
+);
 
 function AppRoutes() {
   const { loading, user, profile } = useAuth();
 
+  React.useEffect(() => {
+    // Initialize performance monitoring
+    initializePerformanceMonitoring();
+  }, []);
+
   if (loading) {
-    return <LoadingSpinner fullScreen text="Loading your account..." />;
+    return <PageLoader />;
   }
 
   // If not logged in and not on login page, redirect to login
@@ -36,94 +53,120 @@ function AppRoutes() {
   }
 
   return (
-    <Routes>
-      <Route path="/login" element={<Login />} />
-      <Route path="/unauthorized" element={<Unauthorized />} />
-      
-      {/* Main Routes */}
-      <Route path="/*" element={
-        <ProtectedRoute>
-          <div className="min-h-screen bg-gray-50">
-            <Navigation />
-            <main className="pt-4">
-              <Routes>
-                <Route path="/" element={<Navigate to="pos" replace />} />
-                <Route path="pos" element={
-                  <RoleBasedRoute allowedRoles={['staff', 'manager', 'admin']}>
-                    <POS />
-                  </RoleBasedRoute>
-                } />
-                <Route path="kitchen" element={
-                  <RoleBasedRoute allowedRoles={['staff', 'manager', 'admin']}>
-                    <Kitchen />
-                  </RoleBasedRoute>
-                } />
-                <Route path="orders" element={
-                  <RoleBasedRoute allowedRoles={['staff', 'manager', 'admin']}>
-                    <Orders />
-                  </RoleBasedRoute>
-                } />
-                <Route path="menu" element={
-                  <RoleBasedRoute allowedRoles={['manager', 'admin']}>
-                    <Menu />
-                  </RoleBasedRoute>
-                } />
-                <Route path="reports" element={
-                  <RoleBasedRoute allowedRoles={['manager', 'admin']}>
-                    <Reports />
-                  </RoleBasedRoute>
-                } />
-                <Route path="settings" element={
-                  <RoleBasedRoute allowedRoles={['admin']}>
-                    <Settings />
-                  </RoleBasedRoute>
-                } />
-                <Route path="staff" element={
-                  <RoleBasedRoute allowedRoles={['admin']}>
-                    <Staff />
-                  </RoleBasedRoute>
-                } />
-                <Route path="profile" element={<Profile />} />
-              </Routes>
-            </main>
-          </div>
-        </ProtectedRoute>
-      } />
-    </Routes>
+    <ErrorBoundary>
+      <Suspense fallback={<PageLoader />}>
+        <Routes>
+          <Route path="/login" element={<Login />} />
+          <Route path="/unauthorized" element={<Unauthorized />} />
+          
+          {/* Main Routes */}
+          <Route path="/*" element={
+            <ProtectedRoute>
+              <div className="min-h-screen bg-gray-50">
+                <Navigation />
+                <main className="pt-4">
+                  <Routes>
+                    <Route path="/" element={<Navigate to="pos" replace />} />
+                    <Route path="pos" element={
+                      <RoleBasedRoute allowedRoles={['staff', 'manager', 'admin']}>
+                        <ErrorBoundary>
+                          <POS />
+                        </ErrorBoundary>
+                      </RoleBasedRoute>
+                    } />
+                    <Route path="kitchen" element={
+                      <RoleBasedRoute allowedRoles={['staff', 'manager', 'admin']}>
+                        <ErrorBoundary>
+                          <Kitchen />
+                        </ErrorBoundary>
+                      </RoleBasedRoute>
+                    } />
+                    <Route path="orders" element={
+                      <RoleBasedRoute allowedRoles={['staff', 'manager', 'admin']}>
+                        <ErrorBoundary>
+                          <Orders />
+                        </ErrorBoundary>
+                      </RoleBasedRoute>
+                    } />
+                    <Route path="menu" element={
+                      <RoleBasedRoute allowedRoles={['manager', 'admin']}>
+                        <ErrorBoundary>
+                          <Menu />
+                        </ErrorBoundary>
+                      </RoleBasedRoute>
+                    } />
+                    <Route path="reports" element={
+                      <RoleBasedRoute allowedRoles={['manager', 'admin']}>
+                        <ErrorBoundary>
+                          <Reports />
+                        </ErrorBoundary>
+                      </RoleBasedRoute>
+                    } />
+                    <Route path="settings" element={
+                      <RoleBasedRoute allowedRoles={['admin']}>
+                        <ErrorBoundary>
+                          <Settings />
+                        </ErrorBoundary>
+                      </RoleBasedRoute>
+                    } />
+                    <Route path="staff" element={
+                      <RoleBasedRoute allowedRoles={['admin']}>
+                        <ErrorBoundary>
+                          <Staff />
+                        </ErrorBoundary>
+                      </RoleBasedRoute>
+                    } />
+                    <Route path="profile" element={
+                      <ErrorBoundary>
+                        <Profile />
+                      </ErrorBoundary>
+                    } />
+                  </Routes>
+                </main>
+              </div>
+            </ProtectedRoute>
+          } />
+        </Routes>
+      </Suspense>
+    </ErrorBoundary>
   );
 }
 
 function App() {
   return (
-    <Router>
-      <AuthProvider>
-        <FranchiseProvider>
-          <AppRoutes />
-          <Toaster 
-            position="top-right"
-            toastOptions={{
-              duration: 4000,
-              style: {
-                background: '#333',
-                color: '#fff',
-              },
-              success: {
-                iconTheme: {
-                  primary: '#22c55e',
-                  secondary: '#fff',
+    <ErrorBoundary>
+      <Router>
+        <AuthProvider>
+          <FranchiseProvider>
+            <AppRoutes />
+            <Toaster
+              position="top-right"
+              toastOptions={{
+                duration: 3000,
+                style: {
+                  background: '#363636',
+                  color: '#fff',
                 },
-              },
-              error: {
-                iconTheme: {
-                  primary: '#ef4444',
-                  secondary: '#fff',
+                success: {
+                  duration: 3000,
+                  iconTheme: {
+                    primary: '#22c55e',
+                    secondary: '#fff',
+                  },
                 },
-              },
-            }}
-          />
-        </FranchiseProvider>
-      </AuthProvider>
-    </Router>
+                error: {
+                  duration: 4000,
+                  iconTheme: {
+                    primary: '#ef4444',
+                    secondary: '#fff',
+                  },
+                },
+              }}
+            />
+          </FranchiseProvider>
+        </AuthProvider>
+      </Router>
+    </ErrorBoundary>
   );
 }
 

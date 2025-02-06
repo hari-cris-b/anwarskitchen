@@ -1,4 +1,5 @@
 import { User } from '@supabase/supabase-js';
+import { ReactNode } from 'react';
 
 export type UserRole = 'admin' | 'manager' | 'staff';
 
@@ -12,11 +13,42 @@ export interface Profile {
   updated_at: string;
 }
 
+export interface StaffMember {
+  id: string;
+  full_name: string;
+  email: string;
+  role: UserRole;
+  phone?: string;
+  is_active: boolean;
+  joining_date?: string;
+  salary?: number;
+  shift?: 'morning' | 'evening' | 'night';
+  franchise_id: string;
+  last_sign_in_at?: string | null;
+}
+
+export interface GetStaffWithAuthResponse {
+  id: string;
+  full_name: string;
+  email: string;
+  role: UserRole;
+  phone: string | null;
+  is_active: boolean;
+  joining_date: string | null;
+  salary: number | null;
+  shift: 'morning' | 'evening' | 'night' | null;
+  franchise_id: string;
+  last_sign_in_at: string | null;
+}
+
 export interface MenuItem {
   id: string;
   name: string;
   price: number;
   category: string;
+  description: string | null;
+  image_url: string | null;
+  is_available: boolean;
   tax_rate: number;
   franchise_id: string;
   is_active: boolean;
@@ -89,6 +121,13 @@ export interface CreateOrderRequest extends BaseOrder {
 export interface FranchiseSettings {
   id: string;
   franchise_id: string;
+  franchise_code: string;
+  agreement_start_date: Date | null;
+  agreement_end_date: Date | null;
+  royalty_percentage: number;
+  security_deposit: number;
+  brand_audit_score?: number;
+  last_audit_date?: Date;
   currency: string;
   tax_rate: number;
   default_discount: number;

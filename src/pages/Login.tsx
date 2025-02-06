@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { Store, ChefHat } from 'lucide-react';
-import { supabase } from '../lib/supabase';
+import { supabase, supabaseAdmin } from '../lib/supabase';
 
 interface ValidationErrors {
   email?: string;
@@ -97,15 +97,6 @@ export default function Login() {
     }
   };
 
-  // Show loading spinner while auth is initializing
-  if (authLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-orange-500" />
-      </div>
-    );
-  }
-
   const handleSignUp = async () => {
     setError('');
     
@@ -151,10 +142,15 @@ export default function Login() {
       // Step 2: Create profile
       await createProfile(authData.user.id, email);
 
-      // Step 3: Show success message
-      setError('Account created successfully! Please check your email for verification and then sign in.');
-      setEmail('');
-      setPassword('');
+      // Step 3: Try an immediate sign in
+      try {
+        await signIn(email, password);
+      } catch (signInError) {
+        // If immediate sign-in fails, show success message
+        setError('Account created successfully! You can now sign in.');
+        setEmail('');
+        setPassword('');
+      }
 
     } catch (err: any) {
       console.error('Sign up error:', err);
@@ -166,22 +162,44 @@ export default function Login() {
 
   const createProfile = async (userId: string, userEmail: string) => {
     try {
-      // Check if any admin exists
-      const { data: adminExists } = await supabase
+      // First, check if any admin exists
+      const { data: adminExists } = await supabaseAdmin
         .from('profiles')
         .select('id')
         .eq('role', 'admin')
         .maybeSingle();
 
-      // Create profile
-      const { error: profileError } = await supabase
+      // Get or create default franchise
+      let franchiseId;
+      const { data: existingFranchise } = await supabaseAdmin
+        .from('franchises')
+        .select('id')
+        .limit(1)
+        .single();
+
+      if (!existingFranchise) {
+        const { data: newFranchise, error: franchiseError } = await supabaseAdmin
+          .from('franchises')
+          .insert([{ name: 'Default Franchise', address: '123 Main St' }])
+          .select()
+          .single();
+
+        if (franchiseError) throw franchiseError;
+        franchiseId = newFranchise.id;
+      } else {
+        franchiseId = existingFranchise.id;
+      }
+
+      // Create profile using admin client
+      const { error: profileError } = await supabaseAdmin
         .from('profiles')
         .insert([
           {
             id: userId,
             email: userEmail,
             full_name: userEmail.split('@')[0],
-            role: adminExists ? 'staff' : 'admin' // First user becomes admin
+            role: adminExists ? 'staff' : 'admin',
+            franchise_id: franchiseId
           }
         ]);
 
@@ -191,6 +209,15 @@ export default function Login() {
       throw error;
     }
   };
+
+  // Show loading spinner while auth is initializing
+  if (authLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-orange-500" />
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gray-100 flex flex-col justify-center py-12 sm:px-6 lg:px-8">
