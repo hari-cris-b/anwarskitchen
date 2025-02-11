@@ -35,7 +35,7 @@ export default function Kitchen() {
 
   useEffect(() => {
     let mounted = true;
-    
+
     const loadOrders = async () => {
       if (!profile?.franchise_id) {
         if (mounted) {
@@ -84,14 +84,22 @@ export default function Kitchen() {
     }
   };
 
-  
+  const handlePrintKOT = async (order: Order) => {
+    try {
+      await PrintService.printKOT(order);
+      toast.success('KOT printed successfully');
+    } catch (err) {
+      console.error('Error printing KOT:', err);
+      toast.error('Failed to print KOT');
+    }
+  };
+
   const filteredOrders = orders.filter(order => {
     const statusMatch = statusFilter === 'all' ? true : order.status === statusFilter;
     // Only show relevant orders for kitchen
     const isKitchenOrder = ['pending', 'preparing'].includes(order.status);
     return statusMatch && isKitchenOrder;
   })
-  // ?.filter(order => order.status !== 'ready' && order.status !== 'completed')
   .sort((a) => (a.status === 'pending' ? -1 : 1)); // Sort to show pending orders first
 
   // Sort orders by status
@@ -105,7 +113,7 @@ export default function Kitchen() {
       }, {} as Record<Order['status'], Order[]>)
     : { all: filteredOrders };
 
-  const kitchenStatuses: Order['status'][] = ['pending', 'preparing', 'ready'];
+  const kitchenStatuses: Order['status'][] = ['pending', 'preparing'];
 
   return (
     <div className="container mx-auto px-4 py-8">
@@ -164,12 +172,19 @@ export default function Kitchen() {
                     <div className="flex justify-between items-start mb-4">
                       <div>
                         <h3 className="font-medium">Table {order.table_number}</h3>
+                          <h3 className="text-sm font-semibold">
+                            Order #
+                              <span className="ml-2 text-xs bg-blue-100 text-blue-800 font-mono px-1 rounded">
+                                {String(order.id).substring(0, 6)}
+                              </span>
+                          </h3>
                         <p className="text-sm text-gray-500">
                           {formatDateTime(order.created_at)}
                           <span className="ml-2">
                             ({getTimeDifference(order.created_at)})
                           </span>
                         </p>
+
                       </div>
                       <div className="flex items-center space-x-2">
                         <button
@@ -177,8 +192,21 @@ export default function Kitchen() {
                             PrintService.printKOT(order)
                               .then(() => toast.success('KOT printed successfully'))
                               .catch(err => {
-                                console.error('Error printing KOT:', err);
-                                toast.error('Failed to print KOT');
+                                if (err.message.includes('KOT already printed')) {
+                                  PrintService.reprintKOT(order)
+                                    .then(() => toast.success('KOT reprinted successfully'))
+                                    .catch(err => {
+                                      if (err.message.includes('Incorrect password')) {
+                                        toast.error('Invalid password for reprinting KOT');
+                                      } else {
+                                        console.error('Error reprinting KOT:', err);
+                                        toast.error('Failed to reprint KOT');
+                                      }
+                                    });
+                                } else {
+                                  console.error('Error printing KOT:', err);
+                                  toast.error('Failed to print KOT');
+                                }
                               });
                           }}
                           className="p-1.5 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-full"
@@ -197,24 +225,21 @@ export default function Kitchen() {
                     </div>
 
                     <div className="space-y-3 mb-4">
-                      {order.items?.map((item, index) => (
-                        <div key={index} className="flex justify-between items-start">
-                          <div>
-                            <div className="font-medium">{item.name}</div>
-                            <div className="text-sm text-gray-600">x{item.quantity}</div>
-                            {item.notes && (
-                              <div className="text-sm text-gray-500 mt-1">{item.notes}</div>
-                            )}
-                          </div>
-                        </div>
+                     {/* <p className="font-medium mb-1">Dishes:</p> */}
+                     <ul className="font-normal list-disc ml-5 text-sm">
+                      {order.items.map((item, index) => (
+                        <li key={index}>
+                          {item.name} (x{item.quantity})
+                        </li>
                       ))}
+                    </ul>
                     </div>
 
                     <div className="flex justify-end space-x-2">
                       {order.status === 'pending' && (
                         <button
                           onClick={() => handleStatusUpdate(order.id, 'preparing')}
-                          className="px-3 py-1 bg-blue-600 text-white rounded-md text-sm hover:bg-blue-700"
+                          className="px-3 py-1 bg-orange-600 text-white rounded-md text-sm hover:bg-orange-700"
                         >
                           Start Preparing
                         </button>

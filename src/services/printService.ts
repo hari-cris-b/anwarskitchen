@@ -107,7 +107,7 @@ export class PrintService {
     content += PrintService.CENTER;
     content += PrintService.BOLD_ON;
     content += PrintService.DOUBLE_WIDTH;
-    content += isKOT ? `KOT #${order.id.slice(-4)}\n` : 'BILL\n';
+    content += isKOT ? `KOT #${String(order.id).substring(0, 6)}\n` : 'BILL\n';
     content += PrintService.NORMAL_WIDTH;
     content += `Table: ${order.table_number}\n`;
     content += `Server: ${order.server_name}\n`;
@@ -216,7 +216,13 @@ export class PrintService {
     }
   }
 
+  private static printedOrders: Set<string> = new Set();
+
   public static async printKOT(order: Order): Promise<void> {
+    if (PrintService.printedOrders.has(order.id)) {
+      throw new Error('KOT already printed for this order');
+    }
+    
     if (PrintService.config.type === 'thermal') {
       const content = PrintService.formatThermalContent(order, true);
       await PrintService.printThermal(content);
@@ -231,7 +237,7 @@ export class PrintService {
         <!DOCTYPE html>
         <html>
           <head>
-            <title>KOT #${order.id}</title>
+            <title>KOT #${String(order.id).substring(0, 6)}</title>
             <style>
               @page {
                 margin: 0;
@@ -268,9 +274,8 @@ export class PrintService {
           </head>
           <body>
             <div class="header">
-              <h2>KOT #${order.id.slice(-4)}</h2>
+              <h2>KOT #${String(order.id).substring(0, 6)}</h2>
               <p>Table: ${order.table_number}</p>
-              <p>Server: ${order.server_name}</p>
               <p>Time: ${formatDateTime(order.created_at)}</p>
             </div>
             <div class="divider"></div>
@@ -298,12 +303,23 @@ export class PrintService {
       printWindow.document.write(content);
       printWindow.document.close();
       printWindow.focus();
-      
+
       setTimeout(() => {
         printWindow.print();
         printWindow.close();
       }, 250);
     }
+
+    PrintService.printedOrders.add(order.id);
+  }
+
+  public static async reprintKOT(order: Order): Promise<void> {
+    const password = prompt('Enter the security password to reprint the order:');
+    if (password !== 'admin') {
+      throw new Error('Incorrect password');
+    }
+    PrintService.printedOrders.delete(order.id);
+    await PrintService.printKOT(order);
   }
 
   public static async printBill(order: Order): Promise<void> {
@@ -321,7 +337,7 @@ export class PrintService {
         <!DOCTYPE html>
         <html>
           <head>
-            <title>Bill #${order.id}</title>
+            <title>Bill #${String(order.id).substring(0, 6)}</title>
             <style>
               @page {
                 margin: 0;
@@ -366,9 +382,8 @@ export class PrintService {
           <body>
             <div class="header">
               <h2>BILL</h2>
-              <p>Bill #${order.id.slice(-4)}</p>
+              <p>Bill #${String(order.id).substring(0, 6)}</p>
               <p>Table: ${order.table_number}</p>
-              <p>Server: ${order.server_name}</p>
               <p>Date: ${formatDateTime(order.created_at)}</p>
             </div>
             <div class="divider"></div>

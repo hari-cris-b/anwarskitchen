@@ -1,6 +1,11 @@
 import { User } from '@supabase/supabase-js';
 import { ReactNode } from 'react';
 
+export interface Category {
+  id: string;
+  name: string;
+}
+
 export type UserRole = 'admin' | 'manager' | 'staff';
 
 export interface Profile {

@@ -1,354 +1,128 @@
--- Current Database Structure Documentation
--- Generated on 2025-02-05
+-- Current Database Structure
 
 -- Compliance Reports Table
-CREATE TABLE IF NOT EXISTS compliance_reports (
-    id uuid NOT NULL PRIMARY KEY,
-    franchise_id uuid,
-    audit_date date,
-    food_quality_score numeric,
-    service_score numeric,
-    cleanliness_score numeric,
-    brand_standards_score numeric,
-    overall_score numeric,
-    notes text,
-    created_at timestamp with time zone
-);
-
--- Daily Sales Table
-CREATE TABLE IF NOT EXISTS daily_sales (
-    id uuid NOT NULL PRIMARY KEY,
-    franchise_id uuid,
-    date date NOT NULL,
-    total_orders integer NOT NULL,
-    total_sales numeric NOT NULL,
-    total_tax numeric NOT NULL,
-    total_discount numeric NOT NULL,
-    net_sales numeric NOT NULL,
-    created_at timestamp with time zone NOT NULL,
-    updated_at timestamp with time zone NOT NULL
+CREATE TABLE compliance_reports (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  franchise_id UUID,
+  audit_date DATE,
+  food_quality_score NUMERIC(3,1),
+  service_score NUMERIC(3,1),
+  cleanliness_score NUMERIC(3,1),
+  brand_standards_score NUMERIC(3,1),
+  overall_score NUMERIC(3,1),
+  notes TEXT,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
 );
 
 -- Franchise Settings Table
-CREATE TABLE IF NOT EXISTS franchise_settings (
-    id uuid NOT NULL PRIMARY KEY,
-    name character varying(255) NOT NULL,
-    address text,
-    phone character varying(20),
-    email character varying(255),
-    currency character varying(10) NOT NULL,
-    tax_rate numeric NOT NULL,
-    created_at timestamp without time zone,
-    updated_at timestamp without time zone,
-    standardized_menu_items jsonb,
-    custom_menu_items jsonb,
-    pricing_variations jsonb,
-    delivery_settings jsonb,
-    pos_configurations jsonb,
-    loyalty_program_settings jsonb
+CREATE TABLE franchise_settings (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  theme JSON DEFAULT '{"primaryColor": "#FFA500", "secondaryColor": "#FFD700"}',
+  tax_rate NUMERIC(5,2) DEFAULT 5.00,
+  currency TEXT DEFAULT 'USD',
+  business_hours JSON DEFAULT '{"monday": {"open": "09:00", "close": "22:00"}}',
+  printer_config JSON DEFAULT '{}',
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT now()
 );
 
 -- Franchises Table
-CREATE TABLE IF NOT EXISTS franchises (
-    id uuid NOT NULL PRIMARY KEY,
-    name text NOT NULL,
-    address text NOT NULL,
-    phone text,
-    franchise_code text,
-    agreement_start_date date,
-    agreement_end_date date,
-    royalty_percentage numeric,
-    security_deposit numeric,
-    brand_audit_score numeric,
-    last_audit_date timestamp without time zone,
-    created_at timestamp with time zone,
-    updated_at timestamp with time zone
+CREATE TABLE franchises (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name TEXT NOT NULL,
+  address TEXT NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT now()
 );
 
 -- Menu Items Table
-CREATE TABLE IF NOT EXISTS menu_items (
-    id uuid NOT NULL PRIMARY KEY,
-    franchise_id uuid,
-    name text NOT NULL,
-    category text NOT NULL,
-    description text,
-    price numeric NOT NULL,
-    tax_rate numeric,
-    is_active boolean,
-    is_available boolean,
-    created_at timestamp with time zone,
-    updated_at timestamp with time zone
+CREATE TABLE menu_items (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name TEXT NOT NULL,
+  price NUMERIC(10,2) NOT NULL,
+  category TEXT NOT NULL,
+  franchise_id UUID,
+  is_available BOOLEAN DEFAULT true,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
+  is_active BOOLEAN DEFAULT true
 );
 
 -- Order Items Table
-CREATE TABLE IF NOT EXISTS order_items (
-    id uuid NOT NULL PRIMARY KEY,
-    order_id uuid NOT NULL,
-    menu_item_id uuid NOT NULL,
-    name character varying(255) NOT NULL,
-    category character varying(100),
-    price numeric NOT NULL,
-    quantity integer NOT NULL,
-    tax_rate numeric,
-    created_at timestamp without time zone,
-    updated_at timestamp without time zone
+CREATE TABLE order_items (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  order_id UUID,
+  menu_item_id UUID NOT NULL,
+  name TEXT NOT NULL,
+  price NUMERIC(10,2) NOT NULL,
+  quantity INTEGER NOT NULL,
+  category TEXT,
+  tax_rate NUMERIC(5,2),
+  notes TEXT,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT now()
 );
 
 -- Orders Table
-CREATE TABLE IF NOT EXISTS orders (
-    id uuid NOT NULL PRIMARY KEY,
-    franchise_id uuid NOT NULL,
-    server_id uuid NOT NULL,
-    server_name character varying(255) NOT NULL,
-    table_number character varying(50) NOT NULL,
-    status character varying(50) NOT NULL,
-    payment_status character varying(50) NOT NULL,
-    payment_method character varying(50),
-    subtotal numeric NOT NULL,
-    tax numeric NOT NULL,
-    discount numeric NOT NULL,
-    additional_charges numeric NOT NULL,
-    total numeric NOT NULL,
-    created_at timestamp without time zone,
-    updated_at timestamp without time zone,
-    pending_at timestamp without time zone,
-    preparing_at timestamp without time zone,
-    ready_at timestamp without time zone,
-    served_at timestamp without time zone,
-    paid_at timestamp without time zone,
-    cancelled_at timestamp without time zone
+CREATE TABLE orders (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  table_number TEXT NOT NULL,
+  server_id UUID NOT NULL,
+  server_name TEXT NOT NULL,
+  franchise_id UUID NOT NULL,
+  status TEXT DEFAULT 'pending',
+  payment_status TEXT DEFAULT 'unpaid',
+  payment_method TEXT,
+  subtotal NUMERIC(10,2) NOT NULL,
+  tax NUMERIC(10,2) NOT NULL,
+  discount NUMERIC(10,2) DEFAULT 0,
+  additional_charges NUMERIC(10,2) DEFAULT 0,
+  total NUMERIC(10,2) NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
+  pending_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
+  preparing_at TIMESTAMP WITH TIME ZONE,
+  ready_at TIMESTAMP WITH TIME ZONE,
+  served_at TIMESTAMP WITH TIME ZONE,
+  paid_at TIMESTAMP WITH TIME ZONE,
+  cancelled_at TIMESTAMP WITH TIME ZONE
 );
 
 -- Profiles Table
-CREATE TABLE IF NOT EXISTS profiles (
-    id uuid NOT NULL PRIMARY KEY,
-    franchise_id uuid,
-    full_name text,
-    email text NOT NULL,
-    role text NOT NULL,
-    created_at timestamp with time zone,
-    updated_at timestamp with time zone
+CREATE TABLE profiles (
+  id UUID PRIMARY KEY,
+  email TEXT NOT NULL,
+  role TEXT NOT NULL,
+  franchise_id UUID NOT NULL,
+  full_name TEXT,
+  phone TEXT,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT now()
 );
 
 -- Sales Reports Table
-CREATE TABLE IF NOT EXISTS sales_reports (
-    id uuid NOT NULL PRIMARY KEY,
-    franchise_id uuid,
-    report_date date,
-    transaction_count integer,
-    daily_sales numeric,
-    average_ticket_size numeric,
-    royalty_amount numeric,
-    created_at timestamp with time zone
+CREATE TABLE sales_reports (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  franchise_id UUID,
+  report_date DATE,
+  daily_sales NUMERIC(10,2),
+  royalty_amount NUMERIC(10,2),
+  transaction_count INTEGER,
+  average_ticket_size NUMERIC(10,2),
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
 );
 
 -- Settings Table
-CREATE TABLE IF NOT EXISTS settings (
-    id uuid NOT NULL PRIMARY KEY,
-    franchise_id uuid NOT NULL,
-    restaurant_name text NOT NULL,
-    address text,
-    phone text NOT NULL,
-    currency text NOT NULL,
-    tax_rate numeric NOT NULL,
-    print_format text NOT NULL,
-    auto_backup boolean NOT NULL,
-    created_at timestamp with time zone NOT NULL,
-    updated_at timestamp with time zone NOT NULL
+CREATE TABLE settings (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  franchise_id UUID NOT NULL,
+  restaurant_name TEXT NOT NULL,
+  address TEXT,
+  phone TEXT NOT NULL,
+  tax_rate NUMERIC(5,2) DEFAULT 0,
+  currency TEXT DEFAULT 'INR',
+  print_format TEXT DEFAULT 'thermal',
+  auto_backup BOOLEAN DEFAULT true,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT now()
 );
-
--- Current RLS Policies
-
--- Daily Sales Policies
-CREATE POLICY "daily_sales_access" ON daily_sales
-    FOR ALL
-    TO authenticated
-    USING (
-        EXISTS (
-            SELECT 1 FROM profiles
-            WHERE profiles.id = auth.uid()
-            AND (
-                profiles.role = 'admin'
-                OR (profiles.role = ANY (ARRAY['staff', 'manager'])
-                    AND profiles.franchise_id = daily_sales.franchise_id)
-            )
-        )
-    )
-    WITH CHECK (
-        EXISTS (
-            SELECT 1 FROM profiles
-            WHERE profiles.id = auth.uid()
-            AND (
-                profiles.role = 'admin'
-                OR (profiles.role = 'manager'
-                    AND profiles.franchise_id = daily_sales.franchise_id)
-            )
-        )
-    );
-
--- Franchise Settings Policies
-CREATE POLICY "franchise_settings_access" ON franchise_settings
-    FOR ALL
-    TO authenticated
-    USING (
-        EXISTS (
-            SELECT 1 FROM profiles
-            WHERE profiles.id = auth.uid()
-            AND (
-                profiles.role = 'admin'
-                OR (profiles.role = ANY (ARRAY['staff', 'manager'])
-                    AND profiles.franchise_id = franchise_settings.id)
-            )
-        )
-    )
-    WITH CHECK (
-        EXISTS (
-            SELECT 1 FROM profiles
-            WHERE profiles.id = auth.uid()
-            AND (
-                profiles.role = 'admin'
-                OR (profiles.role = 'manager'
-                    AND profiles.franchise_id = franchise_settings.id)
-            )
-        )
-    );
-
--- Franchises Policies
-CREATE POLICY "franchise_access" ON franchises
-    FOR ALL
-    TO authenticated
-    USING (
-        EXISTS (
-            SELECT 1 FROM profiles
-            WHERE profiles.id = auth.uid()
-            AND (
-                profiles.role = 'admin'
-                OR (profiles.role = ANY (ARRAY['staff', 'manager'])
-                    AND profiles.franchise_id = franchises.id)
-            )
-        )
-    )
-    WITH CHECK (
-        EXISTS (
-            SELECT 1 FROM profiles
-            WHERE profiles.id = auth.uid()
-            AND profiles.role = 'admin'
-        )
-    );
-
--- Menu Items Policies
-CREATE POLICY "Everyone can view menu items" ON menu_items
-    FOR SELECT
-    TO authenticated
-    USING (true);
-
-CREATE POLICY "Admin can manage menu items" ON menu_items
-    FOR ALL
-    TO authenticated
-    USING (
-        EXISTS (
-            SELECT 1 FROM profiles
-            WHERE profiles.id = auth.uid()
-            AND profiles.role = 'admin'
-        )
-    );
-
--- Order Items Policies
-CREATE POLICY "order_items_franchise_access" ON order_items
-    FOR ALL
-    TO authenticated
-    USING (
-        order_id IN (
-            SELECT orders.id FROM orders
-            WHERE orders.franchise_id = (
-                SELECT profiles.franchise_id
-                FROM profiles
-                WHERE profiles.id = auth.uid()
-            )
-        )
-    )
-    WITH CHECK (
-        order_id IN (
-            SELECT orders.id FROM orders
-            WHERE orders.franchise_id = (
-                SELECT profiles.franchise_id
-                FROM profiles
-                WHERE profiles.id = auth.uid()
-            )
-        )
-    );
-
--- Orders Policies
-CREATE POLICY "orders_franchise_access" ON orders
-    FOR ALL
-    TO authenticated
-    USING (
-        franchise_id = (
-            SELECT profiles.franchise_id
-            FROM profiles
-            WHERE profiles.id = auth.uid()
-        )
-    )
-    WITH CHECK (
-        franchise_id = (
-            SELECT profiles.franchise_id
-            FROM profiles
-            WHERE profiles.id = auth.uid()
-        )
-    );
-
--- Profiles Policies
-CREATE POLICY "Staff can manage their profile" ON profiles
-    FOR SELECT
-    TO authenticated
-    USING (id = auth.uid());
-
--- Settings Policies
-CREATE POLICY "Users can view their franchise settings" ON settings
-    FOR SELECT
-    TO public
-    USING (
-        auth.uid() IN (
-            SELECT profiles.id
-            FROM profiles
-            WHERE profiles.franchise_id = settings.franchise_id
-        )
-    );
-
-CREATE POLICY "Users can update their franchise settings" ON settings
-    FOR UPDATE
-    TO public
-    USING (
-        auth.uid() IN (
-            SELECT profiles.id
-            FROM profiles
-            WHERE profiles.franchise_id = settings.franchise_id
-        )
-    );
-
-CREATE POLICY "Users can insert their franchise settings" ON settings
-    FOR INSERT
-    TO public
-    WITH CHECK (
-        auth.uid() IN (
-            SELECT profiles.id
-            FROM profiles
-            WHERE profiles.franchise_id = settings.franchise_id
-        )
-    );
-
--- Foreign Key Relationships
--- profiles.franchise_id -> franchises.id
--- menu_items.franchise_id -> franchises.id
--- orders.franchise_id -> franchises.id
--- order_items.order_id -> orders.id
--- order_items.menu_item_id -> menu_items.id
--- daily_sales.franchise_id -> franchises.id
--- settings.franchise_id -> franchises.id
--- compliance_reports.franchise_id -> franchises.id
--- sales_reports.franchise_id -> franchises.id
-
--- Role System:
--- 1. admin: Full system access
--- 2. manager: Can manage their assigned franchise
--- 3. staff: Basic access to their assigned franchise

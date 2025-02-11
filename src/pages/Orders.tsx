@@ -288,21 +288,30 @@ const Orders = () => {
                       label="KOT"
                       onClick={async () => {
                         try {
-                          // Fetch fresh order data before printing
                           const freshOrder = await OrderService.getOrderById(selectedOrder.id);
                           if (!freshOrder) {
                             throw new Error('Order not found');
                           }
-                          console.log('Printing KOT for order:', {
-                            id: freshOrder.id,
-                            table: freshOrder.table_number,
-                            items: freshOrder.items,
-                            itemsCount: freshOrder.items?.length
-                          });
-                          // Configure for browser printing by default
                           PrintService.configure({ type: 'browser' });
-                          await PrintService.printKOT(freshOrder);
-                          toast.success('KOT printed successfully');
+                          try {
+                            await PrintService.printKOT(freshOrder);
+                            toast.success('KOT printed successfully');
+                          } catch (printErr: any) {
+                            if (printErr.message.includes('KOT already printed')) {
+                              PrintService.reprintKOT(freshOrder)
+                                .then(() => toast.success('KOT reprinted successfully'))
+                                .catch(err => {
+                                  if (err.message.includes('Incorrect password')) {
+                                    toast.error('Invalid password for reprinting KOT');
+                                  } else {
+                                    console.error('Error reprinting KOT:', err);
+                                    toast.error('Failed to reprint KOT');
+                                  }
+                                });
+                            } else {
+                              throw printErr;
+                            }
+                          }
                         } catch (err: any) {
                           console.error('KOT print error:', err);
                           toast.error(`Failed to print KOT: ${err?.message || 'Unknown error'}`);
@@ -375,14 +384,14 @@ const Orders = () => {
                         <div key={index} className="flex items-start">
                           <div className="flex-1">
                             <div className="flex items-start">
-                              <span className="font-medium flex-1">{item.name}</span>
-                              <span className="text-gray-600 ml-2">×{item.quantity}</span>
+                              <span className="text-gray-600 font-normal flex-1">{item.name}</span>
+                              <span className="font-medium ml-2">×{item.quantity}</span>
                             </div>
                             {item.notes && (
                               <p className="text-sm text-gray-500 mt-1">{item.notes}</p>
                             )}
                           </div>
-                          <div className="ml-4 text-right">
+                          <div className="ml-4 font-medium text-right">
                             <div>{formatCurrency(item.price * item.quantity)}</div>
                             {item.tax_rate && (
                               <div className="text-xs text-gray-500">

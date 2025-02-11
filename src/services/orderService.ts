@@ -12,27 +12,61 @@ const getCurrentTimestamp = () => {
 
 export const OrderService = {
   async getOrders(franchiseId: string): Promise<Order[]> {
-    const { data, error } = await supabase
+    const { data: orders, error } = await supabase
       .rpc('get_franchise_orders', { franchise_id_param: franchiseId })
       .returns<Order[]>();
 
     if (error) throw error;
-    return data || [];
+
+    const orderIds = orders.map(order => order.id);
+    const { data: orderItems, error: itemsError } = await supabase
+      .from('order_items')
+      .select('*')
+      .in('order_id', orderIds);
+
+    if (itemsError) throw itemsError;
+
+    const orderItemsMap = orderItems.reduce((acc, item) => {
+      if (!acc[item.order_id]) {
+        acc[item.order_id] = [];
+      }
+      acc[item.order_id].push(item);
+      return acc;
+    }, {} as Record<string, typeof orderItems>);
+
+    return orders.map(order => ({
+      ...order,
+      items: orderItemsMap[order.id] || []
+    }));
   },
 
   async getOrderById(orderId: string): Promise<Order | null> {
-    const { data, error } = await supabase
+    const { data: order, error } = await supabase
       .rpc('get_order_by_id', { order_id_param: orderId })
-      .returns<Order>()
       .single();
 
     if (error) throw error;
-    return data;
+
+    return order as Order | null;
   },
 
   async placeOrder(orderRequest: CreateOrderRequest): Promise<Order> {
     const timestamp = getCurrentTimestamp();
-    
+
+    // Check for duplicate orders
+    const { data: existingOrders, error: checkError } = await supabase
+      .from('orders')
+      .select('id')
+      .eq('table_number', orderRequest.table_number)
+      .eq('franchise_id', orderRequest.franchise_id)
+      .eq('status', 'pending');
+
+    if (checkError) throw checkError;
+
+    if (existingOrders && existingOrders.length > 0) {
+      throw new Error('Duplicate order detected. Please check the order status.');
+    }
+
     // Create the order with UTC timestamps
     const { data: order, error: orderError } = await supabase
       .from('orders')

@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { MenuItem } from '../types';
-import { supabase } from '../lib/supabase';
+import { MenuItem, Category } from '../types';
 import { toast } from 'react-hot-toast';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { useAuth } from '../contexts/AuthContext';
 import { useFranchise } from '../contexts/FranchiseContext';
+import { MenuService } from '../services/menuService';
 
 interface MenuItemFormData {
   name: string;
@@ -12,17 +12,16 @@ interface MenuItemFormData {
   category: string;
   description: string | null;
   is_available: boolean;
-  image_url: string | null;
   tax_rate: number;
-  franchise_id: string;
-  is_active: boolean;
 }
 
 export default function Menu() {
   const { profile } = useAuth();
   const { settings } = useFranchise();
   const [items, setItems] = useState<MenuItem[]>([]);
-  const [categories, setCategories] = useState<string[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [newCategory, setNewCategory] = useState('');
+  const [isAddingCategory, setIsAddingCategory] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [isAddingItem, setIsAddingItem] = useState(false);
   const [editingItem, setEditingItem] = useState<MenuItem | null>(null);
@@ -40,10 +39,7 @@ export default function Menu() {
     category: '',
     description: null,
     is_available: true,
-    image_url: null,
-    tax_rate: settings?.tax_rate || 0,
-    franchise_id: profile?.franchise_id || '',
-    is_active: true
+    tax_rate: settings?.tax_rate ? parseFloat(String(settings.tax_rate)) : 0
   };
 
   const [formData, setFormData] = useState<MenuItemFormData>(initialFormData);
@@ -53,25 +49,24 @@ export default function Menu() {
   }, []);
 
   const fetchMenuItems = async () => {
+    if (!profile?.franchise_id) {
+      toast.error('No franchise ID available');
+      return;
+    }
+
     try {
       setLoading(true);
-      if (!profile?.franchise_id) {
-        throw new Error('No franchise ID available');
-      }
-
-      const { data, error } = await supabase
-        .from('menu_items')
-        .select('*')
-        .eq('franchise_id', profile.franchise_id)
-        .order(sortConfig.key, { ascending: sortConfig.direction === 'asc' });
-
-      if (error) throw error;
-
-      setItems(data || []);
-      const uniqueCategories = Array.from(new Set(data?.map(item => item.category) || []));
-      setCategories(['all', ...uniqueCategories]);
+      const items = await MenuService.getMenuItems(profile.franchise_id);
+      setItems(items);
+      
+      // Get unique categories from items
+      // Fetch categories from menu items
+      const uniqueCategories = Array.from(new Set(items.map(item => item.category)))
+        .map(name => ({ id: name.toLowerCase().replace(/\s+/g, '-'), name }));
+      setCategories(uniqueCategories);
     } catch (error) {
-      toast.error('Error fetching menu items');
+      console.error('Error fetching menu items:', error);
+      toast.error('Failed to load menu items');
     } finally {
       setLoading(false);
     }
@@ -81,29 +76,20 @@ export default function Menu() {
     e.preventDefault();
     
     if (!profile?.franchise_id) {
-      toast.error('Franchise ID not available');
+      toast.error('No franchise ID available');
       return;
     }
 
     try {
-      // Ensure franchise_id and tax_rate are set
-      const updatedFormData = {
-        ...formData,
-        franchise_id: profile.franchise_id,
-        tax_rate: settings?.tax_rate || 0
-      };
       if (editingItem) {
-        const { error } = await supabase
-          .from('menu_items')
-          .update(updatedFormData)
-          .eq('id', editingItem.id);
-        if (error) throw error;
+        await MenuService.updateMenuItem(editingItem.id, formData);
         toast.success('Item updated successfully');
       } else {
-        const { error } = await supabase
-          .from('menu_items')
-          .insert([updatedFormData]);
-        if (error) throw error;
+        const { description, ...rest } = formData;
+        await MenuService.addMenuItem(
+          profile.franchise_id,
+          { ...rest, franchise_id: profile.franchise_id, is_active: true, details: description } as Omit<MenuItem, "id" | "created_at" | "updated_at"> & { details: string | null }
+        );
         toast.success('Item added successfully');
       }
       
@@ -112,7 +98,8 @@ export default function Menu() {
       setFormData(initialFormData);
       fetchMenuItems();
     } catch (error) {
-      toast.error('Error saving menu item');
+      console.error('Error saving menu item:', error);
+      toast.error('Failed to save menu item');
     }
   };
 
@@ -124,10 +111,7 @@ export default function Menu() {
       category: item.category,
       description: item.description,
       is_available: item.is_available,
-      image_url: item.image_url,
-      tax_rate: item.tax_rate,
-      franchise_id: item.franchise_id,
-      is_active: item.is_active
+      tax_rate: item.tax_rate
     });
     setIsAddingItem(true);
   };
@@ -136,17 +120,24 @@ export default function Menu() {
     if (!window.confirm(`Are you sure you want to delete ${ids.length} item(s)?`)) return;
     
     try {
-      const { error } = await supabase
-        .from('menu_items')
-        .delete()
-        .in('id', ids);
-      
-      if (error) throw error;
+      await MenuService.deleteMenuItems(ids);
       toast.success(`${ids.length} item(s) deleted successfully`);
       setSelectedItems([]);
       fetchMenuItems();
     } catch (error) {
-      toast.error('Error deleting items');
+      console.error('Error deleting items:', error);
+      toast.error('Failed to delete items');
+    }
+  };
+
+  const handleToggleAvailability = async (itemId: string, currentStatus: boolean) => {
+    try {
+      await MenuService.toggleItemAvailability(itemId, !currentStatus);
+      toast.success(`Item ${!currentStatus ? 'enabled' : 'disabled'} successfully`);
+      fetchMenuItems();
+    } catch (error) {
+      console.error('Error updating item availability:', error);
+      toast.error('Failed to update item availability');
     }
   };
 
@@ -174,30 +165,13 @@ export default function Menu() {
   };
 
   const compareValues = (aValue: any, bValue: any): number => {
-    // Handle null values
     if (aValue === null && bValue === null) return 0;
     if (aValue === null) return -1;
     if (bValue === null) return 1;
 
-    // Compare non-null values
     if (aValue < bValue) return sortConfig.direction === 'asc' ? -1 : 1;
     if (aValue > bValue) return sortConfig.direction === 'asc' ? 1 : -1;
     return 0;
-  };
-
-  const handleToggleAvailability = async (itemId: string, currentStatus: boolean) => {
-    try {
-      const { error } = await supabase
-        .from('menu_items')
-        .update({ is_available: !currentStatus })
-        .eq('id', itemId);
-
-      if (error) throw error;
-      fetchMenuItems();
-      toast.success(`Item ${!currentStatus ? 'enabled' : 'disabled'} successfully`);
-    } catch (error) {
-      toast.error('Error updating item availability');
-    }
   };
 
   // Filter and search logic
@@ -239,11 +213,83 @@ export default function Menu() {
             </button>
           )}
           <button
-            onClick={() => setIsAddingItem(true)}
+            onClick={() => {
+              setEditingItem(null);
+              setFormData(initialFormData);
+              setIsAddingItem(true);
+            }}
             className="bg-orange-600 text-white px-4 py-2 rounded hover:bg-orange-700"
           >
             Add New Item
           </button>
+        </div>
+      </div>
+
+      {/* Category Management Section */}
+      <div className="mb-6 bg-white rounded-lg shadow p-4">
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="text-xl font-semibold">Categories</h2>
+          <button
+            onClick={() => setIsAddingCategory(true)}
+            className="bg-orange-600 text-white px-3 py-1 rounded hover:bg-orange-700 text-sm"
+          >
+            Add Category
+          </button>
+        </div>
+
+        {isAddingCategory && (
+          <div className="flex gap-2 mb-4">
+            <input
+              type="text"
+              value={newCategory}
+              onChange={(e) => setNewCategory(e.target.value)}
+              placeholder="Enter new category name"
+              className="flex-1 px-3 py-1 border rounded-md focus:ring-2 focus:ring-orange-500"
+            />
+            <button
+              onClick={() => {
+                if (newCategory.trim()) {
+                  const categoryId = newCategory.toLowerCase().replace(/\s+/g, '-');
+                  setCategories(prev => [...prev, { id: categoryId, name: newCategory.trim() }]);
+                  setNewCategory('');
+                  setIsAddingCategory(false);
+                }
+              }}
+              className="bg-green-600 text-white px-3 py-1 rounded hover:bg-green-700"
+            >
+              Save
+            </button>
+            <button
+              onClick={() => {
+                setNewCategory('');
+                setIsAddingCategory(false);
+              }}
+              className="bg-gray-500 text-white px-3 py-1 rounded hover:bg-gray-600"
+            >
+              Cancel
+            </button>
+          </div>
+        )}
+
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
+          {categories.map((category) => (
+            <div
+              key={category.id}
+              className="flex justify-between items-center bg-gray-100 p-2 rounded"
+            >
+              <span>{category.name}</span>
+              <button
+                onClick={() => {
+                  if (confirm(`Are you sure you want to delete "${category.name}" category?`)) {
+                    setCategories(prev => prev.filter(c => c.id !== category.id));
+                  }
+                }}
+                className="text-red-600 hover:text-red-800"
+              >
+                ×
+              </button>
+            </div>
+          ))}
         </div>
       </div>
 
@@ -259,28 +305,37 @@ export default function Menu() {
 
         {/* Categories with horizontal scroll */}
         <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-thin scrollbar-thumb-orange-400 scrollbar-track-transparent">
+          <button
+            key="all"
+            onClick={() => setSelectedCategory('all')}
+            className={`px-4 py-2 rounded-full whitespace-nowrap ${
+              selectedCategory === 'all'
+                ? 'bg-orange-600 text-white'
+                : 'bg-gray-200 hover:bg-gray-300'
+            }`}
+          >
+            All
+          </button>
           {categories.map((category) => (
             <button
-              key={category}
-              onClick={() => setSelectedCategory(category)}
+              key={category.id}
+              onClick={() => setSelectedCategory(category.name)}
               className={`px-4 py-2 rounded-full whitespace-nowrap ${
-                selectedCategory === category
+                selectedCategory === category.name
                   ? 'bg-orange-600 text-white'
                   : 'bg-gray-200 hover:bg-gray-300'
               }`}
             >
-              {category.charAt(0).toUpperCase() + category.slice(1)}
+              {category.name}
             </button>
           ))}
         </div>
       </div>
 
       {/* Menu Items Table */}
-      <div className="bg-white rounded-lg shadow overflow-y-auto">
+      <div className="bg-white rounded-lg shadow overflow-hidden">
         <div className="overflow-x-auto">
-        {/* <div className="flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-orange-400 scrollbar-track-transparent p-6"> */}
-
-          <table className="min-w-full divide-y divide-gray-200 ">
+          <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
                 <th className="px-6 py-3 text-left">
@@ -404,47 +459,46 @@ export default function Menu() {
                   list="categories"
                 />
                 <datalist id="categories">
-                  {categories.filter(cat => cat !== 'all').map(category => (
-                    <option key={category} value={category} />
+                  {categories.map(category => (
+                    <option key={category.id} value={category.name} />
                   ))}
                 </datalist>
               </div>
 
-                            <div>
-                              <label className="block text-sm font-medium text-gray-700">
-                                Description
-                              </label>
-                              <textarea
-                                value={formData.description || ''}
-                                onChange={e => setFormData({...formData, description: e.target.value || null})}
-                                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-                                rows={3}
-                              />
-                            </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">
+                  Description
+                </label>
+                <textarea
+                  value={formData.description || ''}
+                  onChange={e => setFormData({...formData, description: e.target.value || null})}
+                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                  rows={3}
+                />
+              </div>
               
-                            <div className="flex justify-end space-x-2">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setIsAddingItem(false);
-                                  setEditingItem(null);
-                                }}
-                                className="px-4 py-2 text-gray-700 bg-gray-200 rounded hover:bg-gray-300"
-                              >
-                                Cancel
-                              </button>
-                              <button
-                                type="submit"
-                                className="px-4 py-2 text-white bg-blue-600 rounded hover:bg-blue-700"
-                              >
-                                {editingItem ? 'Update' : 'Add'} Item
-                              </button>
-                            </div>
-                          </form>
-                        </div>
+              <div className="flex justify-end space-x-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsAddingItem(false);
+                    setEditingItem(null);
+                  }}
+                  className="px-4 py-2 text-gray-700 bg-gray-200 rounded hover:bg-gray-300"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 text-white bg-blue-600 rounded hover:bg-blue-700"
+                >
+                  {editingItem ? 'Update' : 'Add'} Item
+                </button>
+              </div>
+                        </form>
                       </div>
-                    )}
-                  </div>
-                );
-              }
-
+                    </div>
+                  )}
+                </div>
+              );
+            }
