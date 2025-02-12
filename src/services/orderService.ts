@@ -4,9 +4,6 @@ import { Order, CreateOrderRequest } from '../types';
 const getCurrentTimestamp = () => {
   // Get current time in UTC
   const now = new Date();
-  // Add 5 hours and 30 minutes for IST offset
-  now.setHours(now.getHours() + 5);
-  now.setMinutes(now.getMinutes() + 30);
   return now.toISOString();
 };
 

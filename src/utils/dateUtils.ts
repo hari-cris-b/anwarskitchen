@@ -1,4 +1,4 @@
-const IST_OPTIONS: Intl.DateTimeFormatOptions = {
+const DATE_OPTIONS: Intl.DateTimeFormatOptions = {
   timeZone: 'Asia/Kolkata',
   hour12: true,
   hour: 'numeric',
@@ -6,22 +6,23 @@ const IST_OPTIONS: Intl.DateTimeFormatOptions = {
   second: '2-digit'
 };
 
-// Convert UTC to IST
-const getISTTime = (date: Date): Date => {
-  const istString = date.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' });
-  return new Date(istString);
-};
-
 export const formatDateTime = (dateString: string | null): string => {
   if (!dateString) return '';
   
   try {
-    // Parse the ISO string and convert to IST
-    const utcDate = new Date(dateString);
-    if (isNaN(utcDate.getTime())) return '';
+    const date = new Date(dateString);
+    if (isNaN(date.getTime())) return '';
 
-    // Format in IST timezone
-    return utcDate.toLocaleString('en-IN', IST_OPTIONS);
+    // Create IST formatter with all required options
+    const formatter = new Intl.DateTimeFormat('en-IN', {
+      timeZone: 'Asia/Kolkata',
+      hour12: true,
+      hour: 'numeric',
+      minute: '2-digit',
+      second: '2-digit'
+    });
+    
+    return formatter.format(date);
   } catch (err) {
     console.error('Error formatting date:', err);
     return '';
@@ -32,15 +33,26 @@ export const getTimeDifference = (dateString: string | null, previousDateString?
   if (!dateString) return '';
   
   try {
-    const utcDate = new Date(dateString);
-    if (isNaN(utcDate.getTime())) return '';
+    const getISTTime = (date: Date) => {
+      return new Date(date.toLocaleString('en-US', {
+        timeZone: 'Asia/Kolkata'
+      }));
+    };
+
+    const date = new Date(dateString);
+    if (isNaN(date.getTime())) return '';
 
     // If comparing with a previous date
     if (previousDateString) {
-      const previousUtcDate = new Date(previousDateString);
-      if (isNaN(previousUtcDate.getTime())) return '';
+      const previousDate = new Date(previousDateString);
+      if (isNaN(previousDate.getTime())) return '';
 
-      const diffMs = utcDate.getTime() - previousUtcDate.getTime();
+      // Convert both dates to IST for comparison
+      const istDate = getISTTime(date);
+      const istPreviousDate = getISTTime(previousDate);
+
+      // Calculate difference in milliseconds
+      const diffMs = Math.abs(istDate.getTime() - istPreviousDate.getTime());
       const diffMins = Math.round(diffMs / 60000);
 
       if (diffMins < 1) return 'less than a minute';
@@ -57,8 +69,11 @@ export const getTimeDifference = (dateString: string | null, previousDateString?
     
     // If comparing with current time
     const now = new Date();
-    const diffMs = now.getTime() - utcDate.getTime();
-    const diffMins = Math.round(diffMs / 60000);
+    const istNow = getISTTime(now);
+    const istDate = getISTTime(date);
+    
+    const diffMs = istNow.getTime() - istDate.getTime();
+    const diffMins = Math.round(Math.abs(diffMs) / 60000);
 
     if (diffMins < 1) return 'just now';
     if (diffMins === 1) return '1 minute ago';

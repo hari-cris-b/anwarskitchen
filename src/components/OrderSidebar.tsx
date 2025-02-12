@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import { Order } from '../types';
-import { useFranchise } from '../contexts/FranchiseContext';
+import { formatCurrency } from '../utils/helpers';
 
 interface OrderSidebarProps {
   orders: Order[];
@@ -9,8 +9,6 @@ interface OrderSidebarProps {
 }
 
 export default function OrderSidebar({ orders, selectedOrderId, onSelectOrder }: OrderSidebarProps) {
-  const { formatCurrency } = useFranchise();
-  
   const formatTime = (dateString: string) => {
     try {
       const date = new Date(dateString);
@@ -51,12 +49,14 @@ export default function OrderSidebar({ orders, selectedOrderId, onSelectOrder }:
             )}
           </div>
           <span className="text-sm font-medium">
-            {formatCurrency(order.total)}
+            {typeof order.total === 'number'
+              ? formatCurrency(order.total)
+              : `Error: Invalid amount ${order.total}`}
           </span>
         </div>
       </button>
     ))
-  ), [orders, selectedOrderId, onSelectOrder, formatCurrency]);
+  ), [orders, selectedOrderId, onSelectOrder]);
 
   return (
     <div className="w-80 border-r bg-gray-50 overflow-hidden flex flex-col">

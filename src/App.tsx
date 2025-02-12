@@ -9,7 +9,6 @@ import LoadingSpinner from './components/LoadingSpinner';
 import { Suspense, lazy } from 'react';
 import { FranchiseProvider } from './contexts/FranchiseContext';
 import ErrorBoundary from './components/ErrorBoundary';
-import { initializePerformanceMonitoring } from './utils/performance';
 
 // Lazy load route components
 const Login = lazy(() => import('./pages/Login'));
@@ -19,7 +18,7 @@ const Orders = lazy(() => import('./pages/Orders'));
 const Menu = lazy(() => import('./pages/Menu'));
 const Reports = lazy(() => import('./pages/Reports'));
 const Settings = lazy(() => import('./pages/Settings'));
-const Staff = lazy(() => import('./pages/Staff'));
+const StaffIndex = lazy(() => import('./pages/StaffIndex'));
 const Profile = lazy(() => import('./pages/Profile'));
 const Unauthorized = lazy(() => import('./pages/Unauthorized'));
 
@@ -32,11 +31,6 @@ const PageLoader = () => (
 
 function AppRoutes() {
   const { loading, user, profile } = useAuth();
-
-  React.useEffect(() => {
-    // Initialize performance monitoring
-    initializePerformanceMonitoring();
-  }, []);
 
   if (loading) {
     return <PageLoader />;
@@ -51,6 +45,8 @@ function AppRoutes() {
   if (user && window.location.pathname === '/login' && profile?.franchise_id) {
     return <Navigate to="/pos" replace />;
   }
+
+  const userRole = profile?.role || 'staff';
 
   return (
     <ErrorBoundary>
@@ -75,14 +71,14 @@ function AppRoutes() {
                       </RoleBasedRoute>
                     } />
                     <Route path="kitchen" element={
-                      <RoleBasedRoute allowedRoles={['staff', 'manager', 'admin']}>
+                      <RoleBasedRoute allowedRoles={['kitchen', 'manager', 'admin']}>
                         <ErrorBoundary>
                           <Kitchen />
                         </ErrorBoundary>
                       </RoleBasedRoute>
                     } />
                     <Route path="orders" element={
-                      <RoleBasedRoute allowedRoles={['staff', 'manager', 'admin']}>
+                      <RoleBasedRoute allowedRoles={['staff', 'manager', 'admin', 'kitchen']}>
                         <ErrorBoundary>
                           <Orders />
                         </ErrorBoundary>
@@ -112,7 +108,7 @@ function AppRoutes() {
                     <Route path="staff" element={
                       <RoleBasedRoute allowedRoles={['admin']}>
                         <ErrorBoundary>
-                          <Staff />
+                          <StaffIndex />
                         </ErrorBoundary>
                       </RoleBasedRoute>
                     } />

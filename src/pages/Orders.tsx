@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { useFranchise } from '../contexts/FranchiseContext';
 import { Order } from '../types';
 import { OrderService } from '../services/orderService';
+import { formatCurrency } from '../utils/helpers';
 import { PrintService } from '../services/printService';
 import LoadingSpinner from '../components/LoadingSpinner';
 import toast from 'react-hot-toast';
@@ -22,7 +22,6 @@ import {
 
 const Orders = () => {
   const { profile } = useAuth();
-  const { formatCurrency } = useFranchise();
   const [orders, setOrders] = useState<Order[]>([]);
   const [selectedOrderId, setSelectedOrderId] = useState<string>();
   const [loading, setLoading] = useState(true);

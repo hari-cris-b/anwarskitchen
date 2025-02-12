@@ -19,21 +19,6 @@ interface Profile {
   shift: 'morning' | 'evening' | 'night' | null;
 }
 
-interface GetUserProfileResponse {
-  id: string;
-  email: string;
-  franchise_id: string;
-  role: UserRole;
-  full_name: string | null;
-  created_at: string;
-  updated_at: string;
-  phone: string | null;
-  is_active: boolean;
-  joining_date: string | null;
-  salary: number | null;
-  shift: 'morning' | 'evening' | 'night' | null;
-}
-
 type AuthResponse = {
   user: User;
   session: Session;
@@ -64,157 +49,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [initialized, setInitialized] = useState(false);
   const navigate = useNavigate();
 
-  const createProfile = useCallback(async (userId: string, userEmail: string): Promise<Profile | null> => {
-    try {
-      // Check if any admin exists using service role client
-      const { data: adminCheck } = await supabaseAdmin
-        .from('profiles')
-        .select('id')
-        .eq('role', 'admin')
-        .single();
-
-      const isFirstUser = !adminCheck;
-
-      let franchiseId: string | null = null;
-
-      if (isFirstUser) {
-        // Create a new franchise for the first admin using service role client
-        const { data: newFranchise, error: franchiseError } = await supabaseAdmin
-          .from('franchises')
-          .insert([
-            {
-              name: 'Default Franchise',
-              address: 'Default Address'
-            }
-          ])
-          .select()
-          .single();
-
-        if (franchiseError) {
-          console.error('Error creating franchise:', franchiseError);
-          return null;
-        }
-
-        franchiseId = newFranchise.id;
-      } else {
-        // For non-admin users, get the first available franchise
-        const { data: franchise } = await supabaseAdmin
-          .from('franchises')
-          .select('id')
-          .limit(1)
-          .single();
-        
-        franchiseId = franchise?.id;
-      }
-
-      if (!franchiseId) {
-        console.error('No franchise available');
-        return null;
-      }
-
-      // Create new profile using service role client
-      const { data: newProfile, error: createError } = await supabaseAdmin
-        .from('profiles')
-        .insert([
-          {
-            id: userId,
-            email: userEmail,
-            full_name: userEmail.split('@')[0],
-            role: isFirstUser ? 'admin' : 'staff',
-            franchise_id: franchiseId
-          }
-        ])
-        .select()
-        .single();
-
-      if (createError) {
-        console.error('Error creating profile:', createError);
-        return null;
-      }
-
-      return newProfile;
-    } catch (error) {
-      console.error('Error in createProfile:', error);
-      return null;
-    }
-  }, []);
-
   const fetchProfile = useCallback(async (userId: string, userEmail: string): Promise<Profile | null> => {
     try {
       const { data, error } = await supabase
-        .rpc('get_user_profile', { user_id: userId })
-        .returns<GetUserProfileResponse>();
+        .rpc('get_user_profile', { user_id: userId });
 
       if (error) {
         console.error('Error fetching profile:', error);
         return null;
       }
 
-      // RPC returns an array, get the first item
-      const profile = Array.isArray(data) ? data[0] : null;
-
-      if (!profile) {
-        console.log('No profile found, creating one...');
-        return await createProfile(userId, userEmail);
-      }
-
-      // Convert to Profile type
-      const formattedProfile: Profile = {
-        id: profile.id,
-        email: profile.email,
-        franchise_id: profile.franchise_id,
-        role: profile.role as UserRole,
-        full_name: profile.full_name,
-        created_at: profile.created_at,
-        updated_at: profile.updated_at,
-        phone: profile.phone,
-        is_active: profile.is_active,
-        joining_date: profile.joining_date,
-        salary: profile.salary,
-        shift: profile.shift
-      };
-
-      // Handle case where profile exists but has no franchise_id
-      if (!profile.franchise_id && profile.role === 'admin') {
-        // Create a new franchise for the admin using service role client
-        const { data: newFranchise, error: franchiseError } = await supabaseAdmin
-          .from('franchises')
-          .insert([
-            {
-              name: 'Default Franchise',
-              address: 'Default Address'
-            }
-          ])
-          .select()
-          .single();
-
-        if (franchiseError) {
-          console.error('Error creating franchise:', franchiseError);
-          return null;
-        }
-
-        // Update the profile with the new franchise_id using service role client
-        const { data: updatedProfile, error: updateError } = await supabaseAdmin
-          .from('profiles')
-          .update({ franchise_id: newFranchise.id })
-          .eq('id', userId)
-          .select()
-          .single();
-
-        if (updateError) {
-          console.error('Error updating profile:', updateError);
-          return null;
-        }
-
-        return updatedProfile;
-      }
-
-      return profile;
+      return data;
     } catch (error) {
       console.error('Error in fetchProfile:', error);
       return null;
     }
-  }, [createProfile]);
+  }, []);
 
   const handleSessionUpdate = useCallback(async (newSession: Session | null) => {
     try {
@@ -225,33 +75,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return;
       }
 
-      // Set session and user immediately to prevent UI flicker
       setSession(newSession);
       setUser(newSession.user);
 
-      // Fetch profile
       const profile = await fetchProfile(newSession.user.id, newSession.user.email!);
       
       if (!profile) {
         console.error('Failed to load user profile');
-        // Don't reset auth state here, just log the error
         return;
       }
       
       setProfile(profile);
     } catch (error) {
       console.error('Error in handleSessionUpdate:', error);
-      // Don't reset auth state on profile fetch error
     }
   }, [fetchProfile]);
 
-  // Separate initialization logic
   useEffect(() => {
     let mounted = true;
 
     const initialize = async () => {
       try {
-        // Get initial session
         const { data: { session: initialSession } } = await supabase.auth.getSession();
         
         if (!mounted) return;
@@ -260,7 +104,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setSession(initialSession);
           setUser(initialSession.user);
           
-          // Fetch profile in background
           const profile = await fetchProfile(initialSession.user.id, initialSession.user.email!);
           if (mounted && profile) {
             setProfile(profile);
@@ -286,9 +129,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [fetchProfile, navigate]);
 
-  // Set up auth listener only after initialization
   useEffect(() => {
     if (!initialized) return;
 
@@ -298,7 +140,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const setupAuthListener = () => {
       const {
         data: { subscription },
-      } = supabase.auth.onAuthStateChange((_event, newSession) => {
+      } = supabase.auth.onAuthStateChange(async (_event, newSession) => {
         if (!mounted) return;
 
         if (!newSession) {
@@ -309,22 +151,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           return;
         }
 
-        // Update session and user immediately
         setSession(newSession);
         setUser(newSession.user);
 
-        // Fetch profile in background
-        Promise.resolve().then(async () => {
-          try {
-            if (!mounted) return;
-            const profile = await fetchProfile(newSession.user.id, newSession.user.email!);
-            if (mounted && profile) {
-              setProfile(profile);
-            }
-          } catch (error) {
-            console.error('Error fetching profile:', error);
+        try {
+          const profile = await fetchProfile(newSession.user.id, newSession.user.email!);
+          if (mounted && profile) {
+            setProfile(profile);
           }
-        });
+        } catch (error) {
+          console.error('Error fetching profile:', error);
+        }
       });
 
       authListener = subscription;
@@ -335,14 +172,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => {
       mounted = false;
       if (authListener) {
-        try {
-          authListener.unsubscribe();
-        } catch (error) {
-          console.error('Error unsubscribing from auth listener:', error);
-        }
+        authListener.unsubscribe();
       }
     };
-  }, [initialized, navigate]);
+  }, [initialized, navigate, fetchProfile]);
 
   const signIn = useCallback(async (email: string, password: string): Promise<AuthResponse> => {
     try {
