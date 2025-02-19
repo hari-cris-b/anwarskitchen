@@ -1,280 +1,137 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { Store, ChefHat } from 'lucide-react';
-import { supabase, supabaseAdmin } from '../lib/supabase';
+import { authLogger } from '../utils/authLogger';
+import LoadingSpinner from '../components/LoadingSpinner';
 
-interface ValidationErrors {
-  email?: string;
-  password?: string;
-}
+type LoginMode = 'staff' | 'super_admin';
 
-export default function Login() {
+const Login = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
-  const [validationErrors, setValidationErrors] = useState<ValidationErrors>({});
-  const [isLoading, setIsLoading] = useState(false);
-  const [touched, setTouched] = useState<{ [key: string]: boolean }>({});
-  const { signIn, user, profile, loading: authLoading } = useAuth();
+  const [formError, setFormError] = useState<string | null>(null);
+  const [loginMode, setLoginMode] = useState<LoginMode>('staff');
+  const { signIn, error, loading, profile } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-
-  // Handle redirect if already authenticated
+  const [showLoading, setShowLoading] = useState(false);
+  
   useEffect(() => {
-    if (!authLoading && user && profile?.franchise_id) {
-      const from = (location.state as any)?.from?.pathname || '/pos';
-      navigate(from, { replace: true });
+    if (profile) {
+      authLogger.info('Login', 'Profile detected', { 
+        type: profile.staff_type,
+        mode: loginMode 
+      });
+
+      const redirectPath = profile.staff_type === 'super_admin' 
+        ? '/super-admin/franchises'
+        : location.state?.from?.pathname || '/';
+
+      authLogger.logRedirect(
+        location.pathname,
+        redirectPath,
+        `Login success - ${profile.staff_type}`
+      );
+
+      navigate(redirectPath, { replace: true });
     }
-  }, [user, profile, authLoading, navigate, location]);
-
-  // Clear error when inputs change
-  useEffect(() => {
-    if (error) setError('');
-  }, [email, password]);
-
-  const validateEmail = (email: string): string | undefined => {
-    if (!email) return 'Email is required';
-    if (!/\S+@\S+\.\S+/.test(email)) return 'Please enter a valid email address';
-    return undefined;
-  };
-
-  const validatePassword = (password: string): string | undefined => {
-    if (!password) return 'Password is required';
-    if (password.length < 6) return 'Password must be at least 6 characters';
-    return undefined;
-  };
-
-  const handleBlur = (field: string) => {
-    setTouched(prev => ({ ...prev, [field]: true }));
-    
-    if (field === 'email') {
-      setValidationErrors(prev => ({
-        ...prev,
-        email: validateEmail(email)
-      }));
-    } else if (field === 'password') {
-      setValidationErrors(prev => ({
-        ...prev,
-        password: validatePassword(password)
-      }));
-    }
-  };
+  }, [profile, navigate, location, loginMode]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    // Validate all fields
-    const emailError = validateEmail(email);
-    const passwordError = validatePassword(password);
-    
-    setValidationErrors({
-      email: emailError,
-      password: passwordError,
+    setFormError(null);
+    setShowLoading(true);
+
+    authLogger.info('Login', 'Attempting login', { 
+      email,
+      mode: loginMode 
     });
 
-    if (emailError || passwordError) {
-      setTouched({ email: true, password: true });
-      return;
-    }
-
     try {
-      setIsLoading(true);
-      setError('');
-      const response = await signIn(email, password);
-      
-      // Check for weak password warning
-      if (response.weakPassword) {
-        console.warn('Weak password detected:', response.weakPassword.message);
-      }
-      
-      // Navigation will be handled by the useEffect
+      await signIn(email, password, loginMode);
+      authLogger.logLogin(loginMode, email, true);
     } catch (err) {
-      console.error('Login error:', err);
-      setError(err instanceof Error ? err.message : 'Failed to sign in');
+      const errorMessage = err instanceof Error ? err.message : 'Failed to sign in';
+      authLogger.logLogin(loginMode, email, false, errorMessage);
+      authLogger.error('Login', 'Login error', { error: err });
+      setFormError(errorMessage);
     } finally {
-      setIsLoading(false);
+      setShowLoading(false);
     }
   };
 
-  const handleSignUp = async () => {
-    setError('');
-    
-    // Validate all fields
-    const emailError = validateEmail(email);
-    const passwordError = validatePassword(password);
-    
-    setValidationErrors({
-      email: emailError,
-      password: passwordError,
+  const handleModeChange = (mode: LoginMode) => {
+    authLogger.debug('Login', 'Mode changed', { 
+      from: loginMode, 
+      to: mode 
     });
-
-    if (emailError || passwordError) {
-      setTouched({ email: true, password: true });
-      return;
-    }
-
-    try {
-      setIsLoading(true);
-
-      // Step 1: Create auth user
-      const { data: authData, error: signUpError } = await supabase.auth.signUp({
-        email,
-        password,
-        options: {
-          emailRedirectTo: window.location.origin
-        }
-      });
-
-      if (signUpError) {
-        if (signUpError.message?.toLowerCase().includes('email already registered')) {
-          setError('An account with this email already exists. Please sign in instead.');
-        } else {
-          setError('Error creating account. Please try again later.');
-        }
-        return;
-      }
-
-      if (!authData.user) {
-        throw new Error('Failed to create user account');
-      }
-
-      // Step 2: Create profile
-      await createProfile(authData.user.id, email);
-
-      // Step 3: Try an immediate sign in
-      try {
-        await signIn(email, password);
-      } catch (signInError) {
-        // If immediate sign-in fails, show success message
-        setError('Account created successfully! You can now sign in.');
-        setEmail('');
-        setPassword('');
-      }
-
-    } catch (err: any) {
-      console.error('Sign up error:', err);
-      setError('An unexpected error occurred. Please try again later.');
-    } finally {
-      setIsLoading(false);
-    }
+    setLoginMode(mode);
   };
-
-  const createProfile = async (userId: string, userEmail: string) => {
-    try {
-      // First, check if any admin exists
-      const { data: adminExists } = await supabaseAdmin
-        .from('profiles')
-        .select('id')
-        .eq('role', 'admin')
-        .maybeSingle();
-
-      // Get or create default franchise
-      let franchiseId;
-      const { data: existingFranchise } = await supabaseAdmin
-        .from('franchises')
-        .select('id')
-        .limit(1)
-        .single();
-
-      if (!existingFranchise) {
-        const { data: newFranchise, error: franchiseError } = await supabaseAdmin
-          .from('franchises')
-          .insert([{ name: 'Default Franchise', address: '123 Main St' }])
-          .select()
-          .single();
-
-        if (franchiseError) throw franchiseError;
-        franchiseId = newFranchise.id;
-      } else {
-        franchiseId = existingFranchise.id;
-      }
-
-      // Create profile using admin client
-      const { error: profileError } = await supabaseAdmin
-        .from('profiles')
-        .insert([
-          {
-            id: userId,
-            email: userEmail,
-            full_name: userEmail.split('@')[0],
-            role: adminExists ? 'staff' : 'admin',
-            franchise_id: franchiseId
-          }
-        ]);
-
-      if (profileError) throw profileError;
-    } catch (error) {
-      console.error('Error creating profile:', error);
-      throw error;
-    }
-  };
-
-  // Show loading spinner while auth is initializing
-  if (authLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-orange-500" />
-      </div>
-    );
-  }
 
   return (
-    <div className="min-h-screen bg-gray-100 flex flex-col justify-center py-12 sm:px-6 lg:px-8">
-      <div className="sm:mx-auto sm:w-full sm:max-w-md">
-        <div className="flex justify-center space-x-4">
-          <Store className="h-12 w-12 text-orange-600" />
-          <ChefHat className="h-12 w-12 text-orange-600" />
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-orange-50 to-white py-12 px-4 sm:px-6 lg:px-8">
+      <div className="max-w-md w-full">
+        <div className="text-center mb-10">
+          <div className="flex justify-center mb-6">
+            <div className="w-20 h-20 rounded-full bg-orange-100 flex items-center justify-center transform transition-transform duration-300 hover:scale-105">
+              <svg className="w-12 h-12 text-orange-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" />
+              </svg>
+            </div>
+          </div>
+          <h2 className="text-3xl font-extrabold text-gray-900 mb-2">
+            Welcome Back
+          </h2>
+          <p className="text-sm text-gray-600">
+            Sign in to access your {loginMode === 'super_admin' ? 'admin panel' : 'POS system'}
+          </p>
         </div>
-        <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">
-          Restaurant POS
-        </h2>
-      </div>
 
-      <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
-        <div className="bg-white py-8 px-4 shadow sm:rounded-lg sm:px-10">
+        <div className="bg-white py-8 px-6 shadow-sm rounded-lg">
+          {/* Login Mode Tabs */}
+          <div className="flex rounded-md shadow-sm mb-6" role="group">
+            <button
+              type="button"
+              onClick={() => handleModeChange('staff')}
+              className={`flex-1 px-4 py-2 text-sm font-medium rounded-l-lg ${
+                loginMode === 'staff'
+                  ? 'bg-indigo-600 text-white'
+                  : 'bg-white text-gray-700 hover:text-indigo-600'
+              } border border-gray-200 transition-colors duration-200`}
+            >
+              Staff Login
+            </button>
+            <button
+              type="button"
+              onClick={() => handleModeChange('super_admin')}
+              className={`flex-1 px-4 py-2 text-sm font-medium rounded-r-lg ${
+                loginMode === 'super_admin'
+                  ? 'bg-indigo-600 text-white'
+                  : 'bg-white text-gray-700 hover:text-indigo-600'
+              } border border-gray-200 transition-colors duration-200`}
+            >
+              Super Admin
+            </button>
+          </div>
+
           <form className="space-y-6" onSubmit={handleSubmit}>
-            {error && (
-              <div className={`p-4 rounded-md ${
-                error.includes('successfully') 
-                  ? 'bg-green-50 text-green-800 border border-green-200' 
-                  : 'bg-red-50 text-red-800 border border-red-200'
-              }`}>
-                <p className="text-sm">{error}</p>
-              </div>
-            )}
-
             <div>
-              <label htmlFor="email" className="block text-sm font-medium text-gray-700">
+              <label htmlFor="email-address" className="block text-sm font-medium text-gray-700">
                 Email address
               </label>
               <div className="mt-1">
                 <input
-                  id="email"
+                  id="email-address"
                   name="email"
                   type="email"
                   autoComplete="email"
                   required
                   value={email}
-                  onChange={(e) => {
-                    setEmail(e.target.value);
-                    if (touched.email) {
-                      setValidationErrors(prev => ({
-                        ...prev,
-                        email: validateEmail(e.target.value)
-                      }));
-                    }
-                  }}
-                  onBlur={() => handleBlur('email')}
-                  className={`appearance-none block w-full px-3 py-2 border ${
-                    touched.email && validationErrors.email
-                      ? 'border-red-300 focus:ring-red-500 focus:border-red-500'
-                      : 'border-gray-300 focus:ring-orange-500 focus:border-orange-500'
-                  } rounded-md shadow-sm placeholder-gray-400 focus:outline-none sm:text-sm`}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="appearance-none block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                  placeholder={`Enter your ${loginMode === 'super_admin' ? 'admin' : 'staff'} email`}
+                  disabled={showLoading}
                 />
-                {touched.email && validationErrors.email && (
-                  <p className="mt-1 text-sm text-red-600">{validationErrors.email}</p>
-                )}
               </div>
             </div>
 
@@ -290,49 +147,76 @@ export default function Login() {
                   autoComplete="current-password"
                   required
                   value={password}
-                  onChange={(e) => {
-                    setPassword(e.target.value);
-                    if (touched.password) {
-                      setValidationErrors(prev => ({
-                        ...prev,
-                        password: validatePassword(e.target.value)
-                      }));
-                    }
-                  }}
-                  onBlur={() => handleBlur('password')}
-                  className={`appearance-none block w-full px-3 py-2 border ${
-                    touched.password && validationErrors.password
-                      ? 'border-red-300 focus:ring-red-500 focus:border-red-500'
-                      : 'border-gray-300 focus:ring-orange-500 focus:border-orange-500'
-                  } rounded-md shadow-sm placeholder-gray-400 focus:outline-none sm:text-sm`}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="appearance-none block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                  placeholder="Enter your password"
+                  disabled={showLoading}
                 />
-                {touched.password && validationErrors.password && (
-                  <p className="mt-1 text-sm text-red-600">{validationErrors.password}</p>
-                )}
               </div>
             </div>
 
-            <div className="flex flex-col space-y-4">
+            {(formError || error) && (
+              <div className="rounded-md bg-red-50 p-4">
+                <div className="flex">
+                  <div className="flex-shrink-0">
+                    <svg
+                      className="h-5 w-5 text-red-400"
+                      xmlns="http://www.w3.org/2000/svg"
+                      viewBox="0 0 20 20"
+                      fill="currentColor"
+                      aria-hidden="true"
+                    >
+                      <path
+                        fillRule="evenodd"
+                        d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z"
+                        clipRule="evenodd"
+                      />
+                    </svg>
+                  </div>
+                  <div className="ml-3">
+                    <h3 className="text-sm font-medium text-red-800">
+                      {formError || error}
+                    </h3>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div>
               <button
                 type="submit"
-                disabled={isLoading || (touched.email && !!validationErrors.email) || (touched.password && !!validationErrors.password)}
-                className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-orange-600 hover:bg-orange-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-orange-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                disabled={showLoading}
+                className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200"
               >
-                {isLoading ? 'Processing...' : 'Sign in'}
-              </button>
-              
-              <button
-                type="button"
-                onClick={handleSignUp}
-                disabled={isLoading || (touched.email && !!validationErrors.email) || (touched.password && !!validationErrors.password)}
-                className="w-full flex justify-center py-2 px-4 border border-orange-600 rounded-md shadow-sm text-sm font-medium text-orange-600 bg-white hover:bg-orange-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-orange-500 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {isLoading ? 'Processing...' : 'Create Account'}
+                {showLoading ? (
+                  <div className="flex items-center space-x-2">
+                    <LoadingSpinner size="small" color="text-white" label="" />
+                    <span>Signing in...</span>
+                  </div>
+                ) : (
+                  'Sign in'
+                )}
               </button>
             </div>
+
+            {loginMode === 'staff' && (
+              <div className="text-center mt-4">
+                <p className="text-sm text-gray-600">
+                  Don't have an account?{' '}
+                  <a
+                    href="/create-account"
+                    className="font-medium text-indigo-600 hover:text-indigo-500"
+                  >
+                    Create one now
+                  </a>
+                </p>
+              </div>
+            )}
           </form>
         </div>
       </div>
     </div>
   );
-}
+};
+
+export default Login;

@@ -1,127 +1,158 @@
 import { useState, useEffect } from 'react';
-import { staffService } from '../services/staffService';
-import { Staff, CreateStaffDTO, UpdateStaffDTO, DatabaseStaff, StatusType } from '../types/staff';
-import { useSupabaseSubscription } from './useSupabaseSubscription';
-import { useFranchise } from '../contexts/FranchiseContext';
+import { supabase } from '../lib/supabase';
+import type { DatabaseStaff, FrontendStaff, StaffRole } from '../types/staff';
+import { convertToFrontendStaff } from '../types/staff';
+import { useAuth } from '../contexts/AuthContext';
+import { authLogger } from '../utils/authLogger';
 
-export interface UseStaffReturn {
-  staff: Staff[];
-  loading: boolean;
-  error: string | null;
-  addStaff: (data: CreateStaffDTO) => Promise<void>;
-  updateStaff: (data: UpdateStaffDTO) => Promise<void>;
-  deactivateStaff: (staffId: string) => Promise<void>;
-  reactivateStaff: (staffId: string) => Promise<void>;
-  updateStaffStatus: (staffId: string, status: StatusType) => Promise<void>;
-  refreshStaff: () => Promise<void>;
+interface UseStaffOptions {
+  franchiseId?: string;
+  role?: StaffRole;
+  enableSubscription?: boolean;
 }
 
-export const useStaff = (): UseStaffReturn => {
-  const [staff, setStaff] = useState<Staff[]>([]);
+interface UseStaffReturn {
+  staff: FrontendStaff[];
+  loading: boolean;
+  error: Error | null;
+  refreshStaff: () => Promise<void>;
+  addStaff: (data: Partial<DatabaseStaff>) => Promise<void>;
+  updateStaff: (data: Partial<DatabaseStaff>) => Promise<void>;
+  deleteStaff: (id: string) => Promise<void>;
+}
+
+export function useStaff({ 
+  franchiseId, 
+  role, 
+  enableSubscription = true 
+}: UseStaffOptions = {}): UseStaffReturn {
+  const [staff, setStaff] = useState<FrontendStaff[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const { franchise } = useFranchise();
+  const [error, setError] = useState<Error | null>(null);
+  const { profile } = useAuth();
 
   const fetchStaff = async () => {
-    if (!franchise) return;
-    
     try {
       setLoading(true);
       setError(null);
-      const data = await staffService.getStaffByFranchise(franchise.id);
-      setStaff(data);
+
+      authLogger.debug('useStaff', 'Fetching staff', { franchiseId, role });
+
+      let query = supabase
+        .from('staff')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (franchiseId) {
+        query = query.eq('franchise_id', franchiseId);
+      }
+
+      if (role) {
+        query = query.eq('staff_type', role);
+      }
+
+      const { data, error } = await query;
+
+      if (error) {
+        throw error;
+      }
+
+      const frontendStaff = (data as DatabaseStaff[]).map(convertToFrontendStaff);
+      
+      authLogger.debug('useStaff', 'Staff fetched successfully', { 
+        count: frontendStaff.length 
+      });
+
+      setStaff(frontendStaff);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to fetch staff');
-      setStaff([]);
+      const error = err instanceof Error ? err : new Error('Failed to fetch staff');
+      authLogger.error('useStaff', 'Error fetching staff', { error });
+      setError(error);
     } finally {
       setLoading(false);
     }
   };
 
-  // Subscribe to real-time updates
-  useSupabaseSubscription(
-    {
-      table: 'staff',
-      filter: franchise ? `franchise_id=eq.${franchise.id}` : undefined,
-      event: '*'
-    },
-    (payload) => {
-      if (!payload.new) return;
-      
-      switch (payload.type) {
-        case 'INSERT':
-          setStaff((prev) => [...prev, staffService.convertToFrontendStaff(payload.new as DatabaseStaff)]);
-          break;
-        case 'UPDATE':
-          setStaff((prev) => 
-            prev.map((staff) => 
-              payload.new && staff.id === payload.new.id
-                ? staffService.convertToFrontendStaff(payload.new as DatabaseStaff)
-                : staff
-            )
-          );
-          break;
-        case 'DELETE':
-          setStaff((prev) => prev.filter((staff) => payload.old ? staff.id !== payload.old.id : true));
-          break;
-      }
-    }
-  );
-
-  // Initial fetch
   useEffect(() => {
-    if (franchise?.id) {
-      fetchStaff();
-    }
-  }, [franchise?.id]);
+    void fetchStaff();
 
-  const addStaff = async (data: CreateStaffDTO): Promise<void> => {
+    if (!enableSubscription) return;
+
+    const subscription = supabase
+      .channel('staff-changes')
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'staff',
+        filter: franchiseId ? `franchise_id=eq.${franchiseId}` : undefined
+      }, () => {
+        void fetchStaff();
+      })
+      .subscribe();
+
+    return () => {
+      void subscription.unsubscribe();
+    };
+  }, [franchiseId, role, enableSubscription]);
+
+  const addStaff = async (data: Partial<DatabaseStaff>) => {
     try {
-      setError(null);
-      await staffService.addStaff(data);
+      console.log('Adding staff with data:', data);
+      const { data: result, error } = await supabase
+        .from('staff')
+        .insert(data);
+
+      if (error) {
+        console.error('Supabase error:', error);
+        throw error;
+      }
+      await fetchStaff();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to add staff member');
-      throw err;
+      const error = err instanceof Error ? err : new Error('Failed to add staff');
+      authLogger.error('useStaff', 'Error adding staff', { error });
+      throw error;
     }
   };
 
-  const updateStaff = async (data: UpdateStaffDTO): Promise<void> => {
+  const updateStaff = async (data: Partial<DatabaseStaff>) => {
     try {
-      setError(null);
-      await staffService.updateStaff(data);
+      const { error } = await supabase
+        .from('staff')
+        .update(data)
+        .eq('id', data.id);
+
+      if (error) throw error;
+      await fetchStaff();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to update staff member');
-      throw err;
+      const error = err instanceof Error ? err : new Error('Failed to update staff');
+      authLogger.error('useStaff', 'Error updating staff', { error });
+      throw error;
     }
   };
 
-  const updateStaffStatus = async (staffId: string, status: StatusType): Promise<void> => {
+  const deleteStaff = async (id: string) => {
     try {
-      setError(null);
-      await staffService.updateStaffStatus(staffId, status);
+      const { error } = await supabase
+        .from('staff')
+        .delete()
+        .eq('id', id);
+
+      if (error) throw error;
+      await fetchStaff();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to update staff status');
-      throw err;
+      const error = err instanceof Error ? err : new Error('Failed to delete staff');
+      authLogger.error('useStaff', 'Error deleting staff', { error });
+      throw error;
     }
-  };
-
-  const deactivateStaff = async (staffId: string): Promise<void> => {
-    return updateStaffStatus(staffId, 'inactive');
-  };
-
-  const reactivateStaff = async (staffId: string): Promise<void> => {
-    return updateStaffStatus(staffId, 'active');
   };
 
   return {
     staff,
     loading,
     error,
+    refreshStaff: fetchStaff,
     addStaff,
     updateStaff,
-    deactivateStaff,
-    reactivateStaff,
-    updateStaffStatus,
-    refreshStaff: fetchStaff
+    deleteStaff
   };
-};
+}

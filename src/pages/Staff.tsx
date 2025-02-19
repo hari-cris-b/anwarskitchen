@@ -1,203 +1,137 @@
-import { useEffect, useState, FormEvent } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { useFranchise } from '../contexts/FranchiseContext';
+import React, { useState, useCallback } from 'react';
+import { useAuth } from '../contexts/AuthContext';
 import { useStaff } from '../hooks/useStaff';
-import { StaffTable } from '../components/StaffTable';
-import { StaffTableSkeleton } from '../components/StaffTableSkeleton';
-import { StaffForm } from '../components/StaffForm';
-import { Staff, StaffFormData } from '../types/staff';
+import { Staff as StaffType, ROLE_PERMISSIONS } from '../types/staff';
+import StaffTable from '../components/StaffTable';
+import StaffForm from '../components/StaffForm';
 import Modal from '../components/Modal';
-import ErrorAlert from '../components/ErrorAlert';
+import Button from '../components/Button';
+import LoadingSpinner from '../components/LoadingSpinner';
 
-const defaultFormData = (franchiseId: string = ''): StaffFormData => ({
-  franchise_id: franchiseId,
-  full_name: '',
-  role: 'staff',
-  email: '',
-  phone: '',
-  shift: 'morning',
-  hourly_rate: 15.00,
-  status: 'active',
-  joining_date: new Date().toISOString().split('T')[0],
-  pin_code: ''
-});
+const Staff: React.FC = () => {
+  const { profile } = useAuth();
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [selectedStaff, setSelectedStaff] = useState<StaffType | undefined>();
+  const {
+    staff,
+    loading,
+    error,
+    addStaff,
+    updateStaff,
+    deleteStaff,
+    refreshStaff
+  } = useStaff();
 
-export const StaffPage = () => {
-  const navigate = useNavigate();
-  const { franchise } = useFranchise();
-  const { staff, loading, error, addStaff, updateStaff, updateStaffStatus } = useStaff();
-
-  const [showAddModal, setShowAddModal] = useState(false);
-  const [showEditModal, setShowEditModal] = useState(false);
-  const [selectedStaff, setSelectedStaff] = useState<Staff | null>(null);
-  const [formError, setFormError] = useState<string | null>(null);
-  const [formData, setFormData] = useState<StaffFormData>(() => 
-    defaultFormData(franchise?.id)
-  );
-
-  useEffect(() => {
-    if (!franchise) {
-      navigate('/');
-      return;
+  const handleFormSubmit = useCallback(async (data: Partial<StaffType>) => {
+    try {
+      if ('id' in data && data.id) {
+        await updateStaff(data);
+      } else {
+        const staffType = data.staff_type || 'staff';
+        const staffTypePermissions = ROLE_PERMISSIONS[staffType];
+        // Remove empty id and clean up data for new staff
+        const { id: _id, created_at: _c, updated_at: _u, auth_id: _a, ...cleanData } = data;
+        
+        await addStaff({
+          ...cleanData,
+          franchise_id: profile?.franchise_id as string,
+          staff_type: staffType,
+          can_void_orders: staffType === 'admin' || staffType === 'manager',
+          can_modify_menu: staffType === 'admin',
+          can_manage_staff: staffType === 'admin',
+          permissions: staffTypePermissions
+        });
+      }
+      setIsModalOpen(false);
+      setSelectedStaff(undefined);
+      await refreshStaff();
+    } catch (err) {
+      console.error('Failed to save staff:', err);
+      throw err;
     }
-  }, [franchise, navigate]);
+  }, [addStaff, updateStaff, refreshStaff, profile?.franchise_id]);
 
-  // Handle staff selection for editing
-  const handleSelectStaff = (staff: Staff) => {
+  const handleEditStaff = useCallback((staff: StaffType) => {
     setSelectedStaff(staff);
-    setFormData({
-      franchise_id: staff.franchise_id,
-      full_name: staff.full_name,
-      role: staff.role,
-      email: staff.email,
-      phone: staff.phone || '',
-      shift: staff.shift || 'morning',
-      hourly_rate: staff.hourly_rate,
-      status: staff.status,
-      joining_date: staff.joining_date || new Date().toISOString().split('T')[0],
-      pin_code: staff.pin_code || ''
-    });
-    setShowEditModal(true);
-  };
+    setIsModalOpen(true);
+  }, []);
 
-  // Reset form
-  const resetForm = () => {
-    setFormData(defaultFormData(franchise?.id));
-    setSelectedStaff(null);
-    setFormError(null);
-  };
-
-  // Handle add staff
-  const handleAddStaff = async (e: FormEvent) => {
-    e.preventDefault();
+  const handleDeactivateStaff = useCallback(async (staff: StaffType) => {
     try {
-      setFormError(null);
-      if (!franchise) return;
-
-      await addStaff({
-        ...formData,
-        franchise_id: franchise.id
-      });
-
-      setShowAddModal(false);
-      resetForm();
-    } catch (err) {
-      setFormError(err instanceof Error ? err.message : 'Failed to add staff member');
-    }
-  };
-
-  // Handle edit staff
-  const handleEditStaff = async (e: FormEvent) => {
-    e.preventDefault();
-    try {
-      setFormError(null);
-      if (!selectedStaff) return;
-
       await updateStaff({
-        id: selectedStaff.id,
-        full_name: formData.full_name,
-        role: formData.role,
-        email: formData.email,
-        phone: formData.phone,
-        shift: formData.shift,
-        hourly_rate: formData.hourly_rate,
-        status: formData.status,
-        pin_code: formData.pin_code
+        id: staff.id,
+        status: 'inactive'
       });
-
-      setShowEditModal(false);
-      resetForm();
+      await refreshStaff();
     } catch (err) {
-      setFormError(err instanceof Error ? err.message : 'Failed to update staff member');
+      console.error('Failed to deactivate staff:', err);
     }
-  };
+  }, [updateStaff, refreshStaff]);
 
-  // Handle status updates
-  const handleStatusUpdate = async (member: Staff, status: 'active' | 'inactive') => {
+  const handleReactivateStaff = useCallback(async (staff: StaffType) => {
     try {
-      await updateStaffStatus(member.id, status);
+      await updateStaff({
+        id: staff.id,
+        status: 'active'
+      });
+      await refreshStaff();
     } catch (err) {
-      console.error(`Failed to ${status === 'active' ? 'reactivate' : 'deactivate'} staff:`, err);
+      console.error('Failed to reactivate staff:', err);
     }
-  };
+  }, [updateStaff, refreshStaff]);
 
-  if (!franchise) {
-    return null;
+  const handleCloseModal = useCallback(() => {
+    setIsModalOpen(false);
+    setSelectedStaff(undefined);
+  }, []);
+
+  if (!profile?.franchise_id) {
+    return <div>Unauthorized</div>;
   }
 
   if (loading) {
-    return <StaffTableSkeleton />;
+    return (
+      <div className="flex justify-center items-center min-h-screen">
+        <LoadingSpinner />
+      </div>
+    );
   }
 
   if (error) {
-    return <ErrorAlert message={error} />;
+    return (
+      <div className="text-center text-red-600">
+        Error loading staff: {error.message}
+      </div>
+    );
   }
 
   return (
-    <div className="p-4">
-      <div className="flex justify-between items-center mb-4">
-        <h1 className="text-2xl font-bold">Staff Management</h1>
-        <button
-          onClick={() => {
-            resetForm();
-            setShowAddModal(true);
-          }}
-          className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
-        >
-          Add Staff Member
-        </button>
+    <div className="container mx-auto px-4 py-8">
+      <div className="flex justify-between items-center mb-6">
+        <h1 className="text-2xl font-semibold text-gray-900">Staff Management</h1>
+        <Button onClick={() => setIsModalOpen(true)}>Add Staff</Button>
       </div>
 
       <StaffTable
         staff={staff}
-        onEdit={handleSelectStaff}
-        onDeactivate={(member) => handleStatusUpdate(member, 'inactive')}
-        onReactivate={(member) => handleStatusUpdate(member, 'active')}
+        onEdit={handleEditStaff}
+        onDeactivate={handleDeactivateStaff}
+        onReactivate={handleReactivateStaff}
       />
 
       <Modal
-        title="Add Staff Member"
-        isOpen={showAddModal}
-        onClose={() => {
-          setShowAddModal(false);
-          resetForm();
-        }}
+        isOpen={isModalOpen}
+        onClose={handleCloseModal}
+        title={selectedStaff ? 'Edit Staff' : 'Add Staff'}
       >
         <StaffForm
-          formData={formData}
-          setFormData={setFormData}
-          onSubmit={handleAddStaff}
-          onCancel={() => {
-            setShowAddModal(false);
-            resetForm();
-          }}
-          isEditing={false}
-          error={formError}
-        />
-      </Modal>
-      
-      <Modal
-        title="Edit Staff Member"
-        isOpen={showEditModal}
-        onClose={() => {
-          setShowEditModal(false);
-          resetForm();
-        }}
-      >
-        <StaffForm
-          formData={formData}
-          setFormData={setFormData}
-          onSubmit={handleEditStaff}
-          onCancel={() => {
-            setShowEditModal(false);
-            resetForm();
-          }}
-          isEditing={true}
-          error={formError}
+          initialData={selectedStaff}
+          onSubmit={handleFormSubmit}
+          onCancel={handleCloseModal}
         />
       </Modal>
     </div>
   );
 };
 
-export default StaffPage;
+export default Staff;

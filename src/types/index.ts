@@ -1,5 +1,6 @@
+import { UserRole } from './staff';
+
 // Basic shared types
-export type UserRole = 'admin' | 'manager' | 'staff' | 'kitchen';
 export type ShiftType = 'morning' | 'evening' | 'night' | null;
 export type StatusType = 'active' | 'inactive';
 
@@ -17,7 +18,7 @@ export interface StaffMember {
   name: string;
   email: string;
   phone?: string;
-  role: 'admin' | 'manager' | 'staff' | 'kitchen';
+  staff_type: UserRole;
   shift: string | null;
   pin_code?: string;
   permissions: StaffPermissions;
@@ -28,37 +29,12 @@ export interface StaffFormData {
   name: string;
   email: string;
   phone: string;
-  role: StaffMember['role'];
+  staff_type: UserRole;
   shift: string | null;
   pin_code: string;
   permissions: StaffPermissions;
 }
 
-// export interface StaffMember {
-//   id: string;
-//   franchise_id: string;
-//   user_id: string;
-//   role: UserRole;
-//   name: string;
-//   email: string;
-//   phone?: string;
-//   status: StatusType;
-//   created_at: string;
-//   updated_at: string;
-//   pin_code?: string;
-//   shift: ShiftType;
-//   permissions: StaffPermissions;
-// }
-
-// export interface StaffFormData {
-//   name: string;
-//   email: string;
-//   phone: string;
-//   role: UserRole;
-//   shift: ShiftType;
-//   pin_code: string;
-//   permissions: StaffPermissions;
-// }
 
 export type SetFormData<T> = (value: T | ((prev: T) => T)) => void;
 
@@ -85,7 +61,7 @@ export const defaultStaffFormData: StaffFormData = {
   name: '',
   email: '',
   phone: '',
-  role: 'staff',
+  staff_type: 'staff',
   shift: null,
   pin_code: '',
   permissions: defaultPermissions,

@@ -1,64 +1,56 @@
 import React from 'react';
-import { LucideIcon } from 'lucide-react';
-import LoadingSpinner from './LoadingSpinner';
+import { twMerge } from 'tailwind-merge';
 
 interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
-  variant?: 'primary' | 'secondary' | 'danger' | 'ghost';
-  size?: 'sm' | 'md' | 'lg';
-  loading?: boolean;
-  icon?: LucideIcon;
+  variant?: 'primary' | 'secondary' | 'danger';
+  size?: 'small' | 'medium' | 'large';
   fullWidth?: boolean;
+  children: React.ReactNode;
 }
 
-export default function Button({
-  children,
+const Button: React.FC<ButtonProps> = ({
   variant = 'primary',
-  size = 'md',
-  loading = false,
-  icon: Icon,
+  size = 'medium',
   fullWidth = false,
+  className,
   disabled,
-  className = '',
+  children,
   ...props
-}: ButtonProps) {
-  const baseStyles = 'inline-flex items-center justify-center font-medium rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 transition-colors';
+}) => {
+  const baseStyles = 'inline-flex items-center justify-center rounded-md font-medium focus:outline-none focus:ring-2 focus:ring-offset-2 transition-colors';
   
-  const variants = {
-    primary: 'bg-orange-500 text-white hover:bg-orange-600 focus:ring-orange-500',
-    secondary: 'bg-gray-100 text-gray-700 hover:bg-gray-200 focus:ring-gray-500',
-    danger: 'bg-red-500 text-white hover:bg-red-600 focus:ring-red-500',
-    ghost: 'text-gray-600 hover:bg-gray-100 focus:ring-gray-500'
+  const variantStyles = {
+    primary: 'bg-blue-600 text-white hover:bg-blue-700 focus:ring-blue-500 disabled:bg-blue-400',
+    secondary: 'bg-gray-200 text-gray-700 hover:bg-gray-300 focus:ring-gray-500 disabled:bg-gray-100',
+    danger: 'bg-red-600 text-white hover:bg-red-700 focus:ring-red-500 disabled:bg-red-400'
   };
 
-  const sizes = {
-    sm: 'px-3 py-1.5 text-sm',
-    md: 'px-4 py-2 text-base',
-    lg: 'px-6 py-3 text-lg'
+  const sizeStyles = {
+    small: 'px-3 py-1.5 text-sm',
+    medium: 'px-4 py-2 text-base',
+    large: 'px-6 py-3 text-lg'
   };
 
-  const width = fullWidth ? 'w-full' : '';
+  const widthStyle = fullWidth ? 'w-full' : '';
+
+  const styles = twMerge(
+    baseStyles,
+    variantStyles[variant],
+    sizeStyles[size],
+    widthStyle,
+    disabled && 'cursor-not-allowed opacity-60',
+    className
+  );
 
   return (
     <button
-      className={`
-        ${baseStyles}
-        ${variants[variant]}
-        ${sizes[size]}
-        ${width}
-        ${disabled || loading ? 'opacity-50 cursor-not-allowed' : ''}
-        ${className}
-      `}
-      disabled={disabled || loading}
+      className={styles}
+      disabled={disabled}
       {...props}
     >
-      {loading ? (
-        <LoadingSpinner size="sm" />
-      ) : (
-        <>
-          {Icon && <Icon className={`h-5 w-5 ${children ? 'mr-2' : ''}`} />}
-          {children}
-        </>
-      )}
+      {children}
     </button>
   );
-}
+};
+
+export default Button;

@@ -3,7 +3,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
 
 export default function Profile() {
-  const { profile, user } = useAuth();
+  const { profile, session } = useAuth();
   const [isEditing, setIsEditing] = useState(false);
   const [fullName, setFullName] = useState(profile?.full_name ?? '');
   const [isLoading, setIsLoading] = useState(false);
@@ -12,7 +12,7 @@ export default function Profile() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user?.id) {
+    if (!session?.user?.id) {
       setError('User not found');
       return;
     }
@@ -25,7 +25,7 @@ export default function Profile() {
       const { error } = await supabase
         .from('profiles')
         .update({ full_name: fullName })
-        .eq('id', user.id);
+        .eq('id', session.user.id);
 
       if (error) throw error;
 
@@ -38,7 +38,7 @@ export default function Profile() {
     }
   };
 
-  if (!profile || !user) {
+  if (!profile || !session) {
     return (
       <div className="min-h-screen bg-gray-100 flex items-center justify-center">
         <div className="text-center">
@@ -87,8 +87,8 @@ export default function Profile() {
                   <div className="sm:col-span-1">
                     <dt className="text-sm font-medium text-gray-500">Role</dt>
                     <dd className="mt-1 text-sm text-gray-900">
-                      {profile.role ? (
-                        profile.role.charAt(0).toUpperCase() + profile.role.slice(1)
+                      {profile.staff_type ? (
+                        profile.staff_type.charAt(0).toUpperCase() + profile.staff_type.slice(1)
                       ) : (
                         'No role assigned'
                       )}

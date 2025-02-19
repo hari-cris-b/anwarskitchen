@@ -1,30 +1,42 @@
-import React from 'react';
-import { Navigate } from 'react-router-dom';
+import React, { ReactNode } from 'react';
+import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import type { UserRole } from '../types';
+import LoadingSpinner from './LoadingSpinner';
+import { AuthUser } from '../types/staff';
 
-interface Props {
-  children: React.ReactNode;
-  requiredRole?: UserRole;
+interface ProtectedRouteProps {
+  children: ReactNode | ((props: { profile: AuthUser }) => ReactNode);
+  requireFranchise?: boolean;
 }
 
-export default function ProtectedRoute({ children, requiredRole }: Props) {
-  const { user, profile, loading } = useAuth();
+export default function ProtectedRoute({ children, requireFranchise = true }: ProtectedRouteProps) {
+  const { session, profile, loading, error } = useAuth();
+  const location = useLocation();
 
-  if (loading) {
+  // Prevent flashing unauthorized during initial load
+  if (loading || (!loading && session && !profile)) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-orange-600"></div>
+      <div className="flex items-center justify-center min-h-screen">
+        <LoadingSpinner size="large" label="Loading..." />
       </div>
     );
   }
 
-  if (!user) {
-    return <Navigate to="/login" />;
+  if (error) {
+    return <Navigate to="/unauthorized" state={{ from: location }} replace />;
   }
 
-  if (requiredRole && profile?.role !== requiredRole) {
-    return <Navigate to="/unauthorized" />;
+  if (!session || !profile) {
+    return <Navigate to="/login" state={{ from: location }} replace />;
+  }
+
+  // Only check franchise requirement if we have a valid profile
+  if (requireFranchise && !profile.franchise_id && profile.staff_type !== 'super_admin') {
+    return <Navigate to="/unauthorized" state={{ from: location }} replace />;
+  }
+
+  if (typeof children === 'function') {
+    return <>{children({ profile })}</>;
   }
 
   return <>{children}</>;

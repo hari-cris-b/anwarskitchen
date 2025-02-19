@@ -1,137 +1,209 @@
-// src/utils/reportUtils.ts
-interface OrderItem {
-  name: string;
-  quantity: number;
-  price: number;
-  category: string;
-  menu_item_id: string;
-}
+import { format, addHours, startOfHour, endOfHour } from 'date-fns';
 
-interface Order {
-  id: string;
+interface HourlyStat {
+  orders: number;
   total: number;
-  order_items: OrderItem[];
-  server_name: string;
-  created_at: string;
 }
-  
-  interface ReportData {
-    peakHour: string;
-    hourlyData: { hour: number; orders: number; }[];
-    orderCount: number;
-    total: number;
-    items: Array<{ name: string; count: number }>;
-    categories: Array<{ name: string; total: number }>;
-    staff: Array<{ name: string; orders: number; total: number }>;
-  }
-  
-  interface ItemCount {
-    [key: string]: number;
-  }
-  
-  interface CategoryTotal {
-    [key: string]: number;
-  }
-  
-  interface StaffStats {
-    [key: string]: {
-      orders: number;
-      total: number;
-    };
-  }
-  
-  export const processReportData = (data: Order[], reportType: string): ReportData => {
-    const result: ReportData = {
-      total: 0,
-      items: [],
-      categories: [],
-      staff: [],
-      orderCount: 0,
-      peakHour: "",
-      hourlyData: []
-    };
-  
-    switch (reportType) {
-      case 'sales':
-        result.total = data.reduce((sum, order) => sum + (order.total || 0), 0);
-        result.orderCount = data.length;
-        
-        // Calculate hourly data
-        const hourlyData = new Array(24).fill(0).map((_, i) => ({
-          hour: i,
-          orders: 0
-        }));
-        
-        data.forEach(order => {
-          const hour = new Date(order.created_at).getHours();
-          hourlyData[hour].orders++;
-        });
-        
-        // Find peak hour
-        const peakHour = hourlyData.reduce((peak, current, index) =>
-          current.orders > hourlyData[peak].orders ? index : peak, 0);
-        
-        result.hourlyData = hourlyData;
-        result.peakHour = `${peakHour}:00`;
-        break;
-  
-      case 'items':
-        const itemCounts: ItemCount = data.reduce((acc, order) => {
-          if (order.order_items && Array.isArray(order.order_items)) {
-            order.order_items.forEach((item) => {
-              if (!acc[item.name]) acc[item.name] = 0;
-              acc[item.name] += item.quantity;
-            });
-          }
-          return acc;
-        }, {} as ItemCount);
-  
-        result.items = Object.entries(itemCounts)
-          .map(([name, count]) => ({ name, count }))
-          .sort((a, b) => b.count - a.count);
-        break;
-  
-      case 'categories':
-        const categoryTotals: CategoryTotal = data.reduce((acc, order) => {
-          if (order.order_items && Array.isArray(order.order_items)) {
-            order.order_items.forEach((item: OrderItem) => {
-              if (!acc[item.category]) acc[item.category] = 0;
-              acc[item.category] += item.price * item.quantity;
-            });
-          }
-          return acc;
-        }, {} as CategoryTotal);
-  
-        result.categories = Object.entries(categoryTotals)
-          .map(([name, total]) => ({ name, total }))
-          .sort((a, b) => b.total - a.total);
-        break;
-  
-      case 'staff':
-        const staffStats: StaffStats = data.reduce((acc, order) => {
-          const staff = order.server_name || 'Unknown';
-          if (!acc[staff]) {
-            acc[staff] = { orders: 0, total: 0 };
-          }
-          acc[staff].orders++;
-          acc[staff].total += order.total || 0;
-          return acc;
-        }, {} as StaffStats);
 
-        // Ensure we have at least one staff entry
-        if (Object.keys(staffStats).length === 0) {
-          staffStats['No Data'] = { orders: 0, total: 0 };
+interface ItemStat {
+  count: number;
+  total: number;
+  category: string;
+}
+
+interface CategoryStat {
+  total: number;
+}
+
+interface StaffStat {
+  orders: number;
+  total: number;
+}
+
+interface SalesReport {
+  total: number;
+  orderCount: number;
+  peakHour: string | null;
+  hourlyData: Array<{ hour: string; orders: number; total: number }>;
+}
+
+interface ItemsReport {
+  items: Array<{ name: string; count: number; total: number; category: string }>;
+}
+
+interface CategoriesReport {
+  categories: Array<{ name: string; total: number }>;
+}
+
+interface StaffReport {
+  staff: Array<{ name: string; orders: number; total: number }>;
+}
+
+type Report = SalesReport | ItemsReport | CategoriesReport | StaffReport;
+
+const generateEmptyHours = () => {
+  const hours: { [key: string]: HourlyStat } = {};
+  for (let i = 0; i < 24; i++) {
+    const hour = i.toString().padStart(2, '0');
+    hours[`${hour}:00`] = { orders: 0, total: 0 };
+  }
+  return hours;
+};
+
+export const processReportData = (orders: any[], type: string): Report => {
+  if (!orders || orders.length === 0) {
+    switch (type) {
+      case 'sales':
+        return {
+          total: 0,
+          orderCount: 0,
+          peakHour: null,
+          hourlyData: Object.entries(generateEmptyHours()).map(([hour, stats]) => ({
+            hour,
+            orders: stats.orders,
+            total: stats.total
+          }))
+        } as SalesReport;
+      case 'items':
+        return {
+          items: []
+        } as ItemsReport;
+      case 'categories':
+        return {
+          categories: []
+        } as CategoriesReport;
+      case 'staff':
+        return {
+          staff: []
+        } as StaffReport;
+      default:
+        return {
+          total: 0,
+          orderCount: 0,
+          peakHour: null,
+          hourlyData: []
+        } as SalesReport;
+    }
+  }
+
+  switch (type) {
+    case 'sales': {
+      const hourlyStats = generateEmptyHours();
+      let totalSales = 0;
+
+      orders.forEach(order => {
+        const orderDate = new Date(order.created_at);
+        const hour = format(orderDate, 'HH:00');
+        hourlyStats[hour].orders++;
+        hourlyStats[hour].total += order.total || 0;
+        totalSales += order.total || 0;
+      });
+
+      const hourlyData = Object.entries(hourlyStats)
+        .map(([hour, stats]) => ({
+          hour,
+          orders: stats.orders,
+          total: stats.total
+        }))
+        .sort((a, b) => a.hour.localeCompare(b.hour));
+
+      const peakHour = hourlyData.reduce((max, curr) => 
+        curr.orders > (max?.orders || 0) ? curr : max
+      , hourlyData[0])?.hour || null;
+
+      return {
+        total: totalSales,
+        orderCount: orders.length,
+        peakHour,
+        hourlyData
+      } as SalesReport;
+    }
+
+    case 'items': {
+      const itemStats: { [key: string]: ItemStat } = {};
+
+      orders.forEach(order => {
+        order.order_items?.forEach((item: any) => {
+          const menuItem = item.menu_items;
+          const itemName = menuItem?.name || 'Unknown Item';
+          const price = item.price_at_time || 0;
+          const quantity = item.quantity || 0;
+
+          if (!itemStats[itemName]) {
+            itemStats[itemName] = { 
+              count: 0, 
+              total: 0,
+              category: menuItem?.category || 'Uncategorized'
+            };
+          }
+          itemStats[itemName].count += quantity;
+          itemStats[itemName].total += price * quantity;
+        });
+      });
+
+      return {
+        items: Object.entries(itemStats)
+          .map(([name, stats]) => ({
+            name,
+            count: stats.count,
+            total: stats.total,
+            category: stats.category
+          }))
+          .sort((a, b) => b.total - a.total)
+      } as ItemsReport;
+    }
+
+    case 'categories': {
+      const categoryStats: { [key: string]: CategoryStat } = {};
+
+      orders.forEach(order => {
+        order.order_items?.forEach((item: any) => {
+          const menuItem = item.menu_items;
+          const category = menuItem?.category || 'Uncategorized';
+          const price = item.price_at_time || 0;
+          const quantity = item.quantity || 0;
+
+          if (!categoryStats[category]) {
+            categoryStats[category] = { total: 0 };
+          }
+          categoryStats[category].total += price * quantity;
+        });
+      });
+
+      return {
+        categories: Object.entries(categoryStats)
+          .map(([name, { total }]) => ({
+            name,
+            total
+          }))
+          .sort((a, b) => b.total - a.total)
+      } as CategoriesReport;
+    }
+
+    case 'staff': {
+      const staffStats: { [key: string]: StaffStat } = {};
+
+      orders.forEach(order => {
+        const staffName = order.server_name || 'Unknown';
+        if (!staffStats[staffName]) {
+          staffStats[staffName] = { orders: 0, total: 0 };
         }
-  
-        result.staff = Object.entries(staffStats)
+        staffStats[staffName].orders++;
+        staffStats[staffName].total += order.total || 0;
+      });
+
+      return {
+        staff: Object.entries(staffStats)
           .map(([name, stats]) => ({
             name,
             orders: stats.orders,
             total: stats.total
           }))
-          .sort((a, b) => b.total - a.total);
-        break;
+          .sort((a, b) => b.total - a.total)
+      } as StaffReport;
     }
-  
-    return result;
-  };
+
+    default:
+      return { items: [] };
+  }
+};

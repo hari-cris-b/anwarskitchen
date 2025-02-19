@@ -1,16 +1,22 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useFranchise } from '../contexts/FranchiseContext';
-import { MenuItem, CartItem, CreateOrderRequest, BillCalculation } from '../types';
+import { MenuItem, CartItem, BillCalculation } from '../types';
 import LoadingSpinner from '../components/LoadingSpinner';
 import ErrorAlert from '../components/ErrorAlert';
+import StaffPin from '../components/StaffPin';
 import { toast } from 'react-hot-toast';
 import { MenuService } from '../services/menuService';
-import { OrderService } from '../services/orderService';
+import { playNotificationSound } from '../utils/audioUtils';
+import { orderService, type CreateOrderInput } from '../services/orderService';
+import { staffService } from '../services/staffService';
 
 export default function POS() {
   const { profile } = useAuth();
   const { settings, loading: franchiseLoading, error: franchiseError } = useFranchise();
+  const [showPinVerification, setShowPinVerification] = useState(false);
+  const [isVerified, setIsVerified] = useState(false);
+  const [pendingOrder, setPendingOrder] = useState<any>(null);
   
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
@@ -26,16 +32,21 @@ export default function POS() {
   const [discountType, setDiscountType] = useState<'percentage' | 'amount'>('percentage');
 
   useEffect(() => {
+    setIsVerified(false);
+  }, [profile?.id]);
+
+  useEffect(() => {
+    if (cart.length === 0) {
+      setIsVerified(false);
+    }
+  }, [cart.length]);
+
+  useEffect(() => {
     let mounted = true;
 
     const loadMenuItems = async () => {
       try {
-        // Wait for franchise settings to be loaded
-        if (franchiseLoading) {
-          return;
-        }
-
-        // Show franchise error if any
+        if (franchiseLoading) return;
         if (franchiseError) {
           setError(franchiseError);
           return;
@@ -49,12 +60,10 @@ export default function POS() {
         setLoading(true);
         setError(null);
 
-        // Use MenuService to get menu items
         const menuData = await MenuService.getMenuItems(profile.franchise_id);
         
         if (mounted) {
           setMenuItems(menuData);
-          // Extract unique categories
           const uniqueCategories = Array.from(new Set(menuData.map(item => item.category)));
           setCategories(['All', ...uniqueCategories]);
           setLoading(false);
@@ -69,24 +78,36 @@ export default function POS() {
     };
 
     loadMenuItems();
-
     return () => {
       mounted = false;
     };
   }, [profile?.franchise_id, franchiseLoading, franchiseError]);
 
+  const handlePinVerify = async (pin: string): Promise<boolean> => {
+    if (!profile?.id || !profile?.franchise_id) return false;
+    try {
+      const isValid = await staffService.verifyPin(profile.id, profile.franchise_id, pin);
+      if (isValid) {
+        setIsVerified(true);
+      }
+      return isValid;
+    } catch (err) {
+      console.error('PIN verification error:', err);
+      toast.error(err instanceof Error ? err.message : 'Failed to verify PIN');
+      return false;
+    }
+  };
+
   const calculateBill = (items: CartItem[]): BillCalculation => {
     const subtotal = items.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-    const taxRate = settings?.tax_rate || 0;
+    const taxRate = Number(settings?.tax_rate ?? 0);
     const tax = (subtotal * taxRate) / 100;
     
-    // Calculate discount
     const discountValue = discount ? parseFloat(discount) : 0;
     const discountAmount = discountType === 'percentage' 
       ? (subtotal * discountValue) / 100 
       : discountValue;
 
-    // Calculate total with all adjustments
     const additionalChargesValue = additionalCharges ? parseFloat(additionalCharges) : 0;
     const total = Math.round(subtotal + tax - discountAmount + additionalChargesValue);
 
@@ -126,32 +147,39 @@ export default function POS() {
     });
   };
 
-  const handlePlaceOrder = async () => {
-    if (!profile?.franchise_id) {
-      toast.error('No franchise ID available');
-      return;
+  const validateOrder = () => {
+    if (!profile) {
+      toast.error('Session expired. Please log in again.');
+      return null;
+    }
+
+    if (!profile.franchise_id) {
+      toast.error('No franchise associated with your account. Please contact your administrator.');
+      return null;
     }
 
     if (cart.length === 0) {
-      toast.error('Cart is empty');
-      return;
+      toast.error('Please add items to the cart before placing an order.');
+      return null;
     }
 
-    if (!tableNumber) {
-      toast.error('Please enter a table number');
-      return;
+    if (!tableNumber.trim()) {
+      toast.error('Please enter a valid table number before placing the order.');
+      return null;
     }
 
-    setIsSubmitting(true);
+    return profile;
+  };
 
+  const submitOrder = async (validatedProfile: any) => {
     try {
-      const orderData: CreateOrderRequest = {
+      setIsSubmitting(true);
+      const bill = calculateBill(cart);
+      const orderInput: CreateOrderInput = {
+        franchise_id: validatedProfile.franchise_id,
         table_number: tableNumber,
-        server_id: profile.id,
-        server_name: profile.full_name ?? profile.email,
-        franchise_id: profile.franchise_id,
-        status: 'pending',
-        payment_status: 'unpaid',
+        server_id: validatedProfile.id,
+        server_name: validatedProfile.full_name || validatedProfile.email || 'Unknown Server',
         subtotal: bill.subtotal,
         tax: bill.tax,
         discount: bill.discount,
@@ -159,36 +187,56 @@ export default function POS() {
         total: bill.total,
         items: cart.map(item => ({
           menu_item_id: item.id,
-          name: item.name,
-          price: item.price,
           quantity: item.quantity,
-          category: item.category,
-          tax_rate: item.tax_rate
+          price: item.price,
+          notes: undefined
         }))
       };
 
-      await OrderService.placeOrder(orderData);
+      await orderService.createOrder(orderInput);
       toast.success('Order placed successfully');
+      playNotificationSound();
+      
+      // Reset form state
       setCart([]);
       setTableNumber('');
       setDiscount('');
       setAdditionalCharges('');
       setShowAdjustments(false);
+      setIsVerified(false);
     } catch (err) {
       console.error('Error placing order:', err);
       toast.error(err instanceof Error ? err.message : 'Failed to place order');
+      throw err; // Re-throw to be handled by handlePlaceOrder
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  if (loading || franchiseLoading) {
-    return <LoadingSpinner fullScreen text="Loading menu items..." />;
-  }
+  const handlePlaceOrder = async () => {
+    const validatedProfile = validateOrder();
+    if (!validatedProfile) return;
 
-  if (error || franchiseError) {
-    return <ErrorAlert message={error || franchiseError || 'An error occurred'} />;
-  }
+    if (!isVerified) {
+      setPendingOrder(validatedProfile);
+      setShowPinVerification(true);
+      return;
+    }
+
+    await submitOrder(validatedProfile).catch(() => {
+      // Error already shown in submitOrder
+    });
+  };
+
+  // Show loading state within menu section instead of full page
+  const showLoadingState = loading || franchiseLoading;
+
+  // Show error notifications but don't block the interface
+  useEffect(() => {
+    if (error || franchiseError) {
+      toast.error(error || franchiseError || 'An error occurred');
+    }
+  }, [error, franchiseError]);
 
   const filteredItems = selectedCategory === 'All'
     ? menuItems
@@ -218,10 +266,17 @@ export default function POS() {
         </div>
 
         {/* Menu Items Grid */}
-        {/* <div className="flex-1 overflow-y-auto"> */}
         <div className="flex-1 gap-2 mb-6 overflow-y-auto pb-2 scrollbar-thin scrollbar-thumb-orange-400 scrollbar-track-transparent -mx-6 px-6">
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-            {filteredItems.map((item) => (
+            {showLoadingState ? (
+              <div className="col-span-full flex justify-center items-center py-12">
+                <LoadingSpinner size="large" label="Loading menu items..." />
+              </div>
+            ) : filteredItems.length === 0 ? (
+              <div className="col-span-full text-center py-12 text-gray-500">
+                No menu items available
+              </div>
+            ) : filteredItems.map((item) => (
               <button
                 key={item.id}
                 onClick={() => handleAddToCart(item)}
@@ -258,18 +313,16 @@ export default function POS() {
           </div>
         </div>
 
-        {/* <div className="flex-1 overflow-y-auto p-6"> */}
         <div className="flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-orange-400 scrollbar-track-transparent p-6">
-
           {cart.length === 0 ? (
             <div className="text-center text-gray-500 mt-8">
               No items in cart
             </div>
           ) : (
             <div className="space-y-4">
-              {cart.map((item, index) => (
+              {cart.map((item) => (
                 <div
-                  key={index}
+                  key={item.id}
                   className="flex justify-between items-start pb-4 border-b last:border-0"
                 >
                   <div>
@@ -411,6 +464,29 @@ export default function POS() {
           </div>
         </div>
       </div>
+
+      {showPinVerification && (
+        <StaffPin
+          onVerify={handlePinVerify}
+          onSuccess={async () => {
+            try {
+              if (pendingOrder) {
+                await submitOrder(pendingOrder);
+              }
+            } catch (error) {
+              console.error('Error submitting order:', error);
+              toast.error('Failed to submit order');
+            } finally {
+              setPendingOrder(null);
+              setShowPinVerification(false);
+            }
+          }}
+          onCancel={() => {
+            setShowPinVerification(false);
+            setIsVerified(false);
+          }}
+        />
+      )}
     </div>
   );
 }

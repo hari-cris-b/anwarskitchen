@@ -1,4 +1,4 @@
-import { FranchiseSettings } from '../contexts/FranchiseContext';
+import { FranchiseSettings } from '../types/franchise';
 
 type DayOfWeek = 'monday' | 'tuesday' | 'wednesday' | 'thursday' | 'friday' | 'saturday' | 'sunday';
 
@@ -13,9 +13,9 @@ function getCurrentDayName(): DayOfWeek {
 
 export function isBusinessOpen(settings: FranchiseSettings): boolean {
   const day = getCurrentDayName();
-  const hours = settings.business_hours[day];
+  const hours = settings.business_hours?.[day];
   
-  if (!hours) return false;
+  if (!hours || hours.is_closed) return false;
   
   const now = new Date();
   const currentTime = now.toLocaleTimeString('en-US', { hour12: false });
@@ -27,7 +27,7 @@ export function calculateTotalWithTax(amount: number, settings: FranchiseSetting
   tax: number;
   total: number;
 } {
-  const taxRate = parseFloat(settings.tax_rate) / 100;
+  const taxRate = parseFloat(settings.tax_rate || '0') / 100;
   const tax = amount * taxRate;
   
   return {
@@ -62,29 +62,36 @@ export function getPrinterConfig(settings: FranchiseSettings) {
 }
 
 export function getThemeStyles(settings: FranchiseSettings) {
+  const defaultTheme = {
+    primaryColor: '#4F46E5',
+    secondaryColor: '#6366F1'
+  };
+  
   return {
-    primary: settings.theme.primaryColor,
-    secondary: settings.theme.secondaryColor,
+    primary: settings.theme?.primaryColor ?? defaultTheme.primaryColor,
+    secondary: settings.theme?.secondaryColor ?? defaultTheme.secondaryColor,
     cssVars: {
-      '--primary-color': settings.theme.primaryColor,
-      '--secondary-color': settings.theme.secondaryColor,
+      '--primary-color': settings.theme?.primaryColor ?? defaultTheme.primaryColor,
+      '--secondary-color': settings.theme?.secondaryColor ?? defaultTheme.secondaryColor,
     }
   };
 }
 
 export function getAcceptedPaymentMethods(settings: FranchiseSettings): string[] {
   const methods: string[] = [];
-  if (settings.printer_config.accept_cash) methods.push('cash');
-  if (settings.printer_config.accept_card) methods.push('card');
-  if (settings.printer_config.accept_upi) methods.push('upi');
+  if (settings.printer_config?.accept_cash) methods.push('cash');
+  if (settings.printer_config?.accept_card) methods.push('card');
+  if (settings.printer_config?.accept_upi) methods.push('upi');
   return methods;
 }
 
 export function validateBusinessHours(hours: FranchiseSettings['business_hours']): boolean {
+  if (!hours) return false;
+  
   const days: DayOfWeek[] = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
   return days.every(day => {
     const dayHours = hours[day];
-    if (!dayHours) return true; // Not configured is valid
+    if (!dayHours || dayHours.is_closed) return true; // Not configured or closed is valid
     return dayHours.open < dayHours.close; // Ensure open time is before close time
   });
 }
@@ -93,41 +100,41 @@ export function shouldShowNotification(
   type: keyof FranchiseSettings['notification_settings'],
   settings: FranchiseSettings
 ): boolean {
-  return Boolean(settings.notification_settings[type]);
+  return Boolean(settings.notification_settings?.[type]);
 }
 
 export function getReceiptConfig(settings: FranchiseSettings) {
   return {
-    showLogo: settings.receipt_template.show_logo,
-    showGst: settings.receipt_template.show_gst,
-    showTaxBreakdown: settings.receipt_template.show_tax_breakdown,
-    header: settings.receipt_header,
-    footer: settings.receipt_footer,
-    gstNumber: settings.gst_number,
-    businessName: settings.business_name,
-    address: settings.address,
-    phone: settings.phone,
-    email: settings.email,
+    showLogo: settings.receipt_template?.show_logo ?? false,
+    showGst: settings.receipt_template?.show_gst ?? false,
+    showTaxBreakdown: settings.receipt_template?.show_tax_breakdown ?? false,
+    header: settings.receipt_header ?? '',
+    footer: settings.receipt_footer ?? '',
+    gstNumber: settings.gst_number ?? '',
+    businessName: settings.business_name ?? '',
+    address: settings.address ?? '',
+    phone: settings.phone ?? '',
+    email: settings.email ?? '',
   };
 }
 
 export function getBusinessInfo(settings: FranchiseSettings) {
   return {
-    name: settings.business_name,
-    type: settings.business_type,
-    isChain: settings.is_chain_business,
-    seatingCapacity: settings.seating_capacity,
+    name: settings.business_name ?? '',
+    type: settings.business_type ?? '',
+    isChain: settings.is_chain_business ?? false,
+    seatingCapacity: settings.seating_capacity ?? 0,
     contact: {
-      phone: settings.phone,
-      email: settings.email,
-      website: settings.website
+      phone: settings.phone ?? '',
+      email: settings.email ?? '',
+      website: settings.website ?? ''
     },
     address: {
-      full: settings.address,
-      city: settings.city,
-      state: settings.state,
-      country: settings.country,
-      pincode: settings.pincode
+      full: settings.address ?? '',
+      city: settings.city ?? '',
+      state: settings.state ?? '',
+      country: settings.country ?? '',
+      pincode: settings.pincode ?? ''
     }
   };
 }
@@ -136,8 +143,8 @@ export function getBusinessInfo(settings: FranchiseSettings) {
  * Helper to check if a specific day has business hours configured
  */
 export function isDayConfigured(settings: FranchiseSettings, day: DayOfWeek): boolean {
-  const hours = settings.business_hours[day];
-  return Boolean(hours?.open && hours?.close);
+  const hours = settings.business_hours?.[day];
+  return Boolean(hours?.open && hours?.close && !hours?.is_closed);
 }
 
 /**
@@ -146,9 +153,20 @@ export function isDayConfigured(settings: FranchiseSettings, day: DayOfWeek): bo
 export function getFormattedBusinessHours(settings: FranchiseSettings): Record<DayOfWeek, string> {
   const days: DayOfWeek[] = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
   
+  if (!settings.business_hours) {
+    return days.reduce((acc, day) => {
+      acc[day] = 'Not configured';
+      return acc;
+    }, {} as Record<DayOfWeek, string>);
+  }
+  
   return days.reduce((acc, day) => {
-    const hours = settings.business_hours[day];
-    acc[day] = hours ? `${hours.open} - ${hours.close}` : 'Closed';
+    const hours = settings.business_hours![day];
+    if (!hours || hours.is_closed) {
+      acc[day] = 'Closed';
+    } else {
+      acc[day] = `${hours.open} - ${hours.close}`;
+    }
     return acc;
   }, {} as Record<DayOfWeek, string>);
 }

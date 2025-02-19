@@ -40,7 +40,7 @@ declare global {
   }
 }
 
-import { Order } from '../types';
+import { OrderWithItems } from './orderService';
 import { formatDateTime } from '../utils/dateUtils';
 
 interface PrinterConfig {
@@ -99,7 +99,7 @@ export class PrintService {
     return ' '.repeat(Math.floor(padding)) + text;
   }
 
-  private static formatThermalContent(order: Order, isKOT: boolean): string {
+  private static formatThermalContent(order: OrderWithItems, isKOT: boolean): string {
     const width = PrintService.config.characterWidth || PrintService.DEFAULT_CHAR_WIDTH;
     let content = '';
 
@@ -110,7 +110,6 @@ export class PrintService {
     content += isKOT ? `KOT #${String(order.id).substring(0, 6)}\n` : 'BILL\n';
     content += PrintService.NORMAL_WIDTH;
     content += `Table: ${order.table_number}\n`;
-    content += `Server: ${order.server_name}\n`;
     content += `Time: ${formatDateTime(order.created_at)}\n`;
     content += PrintService.BOLD_OFF;
     
@@ -122,17 +121,16 @@ export class PrintService {
     if (!Array.isArray(order.items) || order.items.length === 0) {
       content += 'No items found\n';
     } else {
-      // Sort items by category for kitchen organization
-      const itemsByCategory: { [key: string]: typeof order.items } = {};
-      order.items.forEach(item => {
-        if (item && typeof item === 'object' && 'quantity' in item && 'name' in item) {
-          const category = item.category || 'Other';
-          if (!itemsByCategory[category]) {
-            itemsByCategory[category] = [];
-          }
-          itemsByCategory[category].push(item);
+      // Format and group items by category
+      const formattedItems = order.items.map(item => PrintService.formatItem(item));
+      const itemsByCategory = formattedItems.reduce((acc, item) => {
+        const category = item.category || 'Other';
+        if (!acc[category]) {
+          acc[category] = [];
         }
-      });
+        acc[category].push(item);
+        return acc;
+      }, {} as Record<string, typeof formattedItems>);
 
       // Print items grouped by category
       Object.entries(itemsByCategory).forEach(([category, items]) => {
@@ -140,47 +138,24 @@ export class PrintService {
         content += '-'.repeat(20) + '\n';
         items.forEach(item => {
           content += `${item.quantity}x ${item.name}\n`;
-          if (!isKOT && 'price' in item && typeof item.price === 'number') {
+          if (!isKOT && item.price) {
             content += `${' '.repeat(4)}₹${(item.price * item.quantity).toFixed(2)}\n`;
           }
-          if ('notes' in item && item.notes) {
+          if (item.notes) {
             content += `${' '.repeat(4)}Note: ${item.notes}\n`;
           }
         });
       });
     }
 
-    // Bill totals (only for bill print)
-    if (!isKOT) {
-      content += '-'.repeat(width) + '\n';
-      content += PrintService.BOLD_ON;
-      content += `Subtotal: ₹${order.subtotal.toFixed(2)}\n`;
-      content += `CGST: ₹${order.tax.toFixed(2)}\n`;
-      
-      if (order.additional_charges > 0) {
-        content += `Additional: ₹${order.additional_charges.toFixed(2)}\n`;
-      }
-      if (order.discount > 0) {
-        content += `Discount: -₹${order.discount.toFixed(2)}\n`;
-      }
-      
-      content += PrintService.DOUBLE_WIDTH;
-      content += `Total: ₹${order.total.toFixed(2)}\n`;
-      content += PrintService.NORMAL_WIDTH;
-      content += PrintService.BOLD_OFF;
-    }
-
     // Footer
     content += '-'.repeat(width) + '\n';
     content += PrintService.CENTER;
-    content += isKOT ? 
+    content += isKOT ?
       `Status: ${order.status.toUpperCase()}\n` :
-      `Payment: ${order.payment_status.toUpperCase()}\n`;
+      `Status: ${order.status.toUpperCase()}\n`;
     
     if (!isKOT) {
-      if (order.payment_method) {
-        content += `Method: ${order.payment_method.toUpperCase()}\n`;
-      }
       content += 'Thank you for dining with us!\n';
     }
 
@@ -218,7 +193,31 @@ export class PrintService {
 
   private static printedOrders: Set<string> = new Set();
 
-  public static async printKOT(order: Order): Promise<void> {
+  private static calculateOrderTotals(order: OrderWithItems) {
+    const subtotal = order.items.reduce((sum, item) => sum + (item.quantity * item.price), 0);
+    const tax = subtotal * 0.05; // 5% tax rate
+    const total = subtotal + tax;
+    return { subtotal, tax, total };
+  }
+
+  // Type for order item with menu_item
+  private static formatItem(item: OrderWithItems['items'][0]): {
+    quantity: number;
+    name: string;
+    category: string;
+    price: number;
+    notes: string | null;
+  } {
+    return {
+      quantity: item.quantity,
+      name: item.menu_item.name,
+      category: item.menu_item.category,
+      price: item.price,
+      notes: item.notes
+    };
+  }
+
+  public static async printKOT(order: OrderWithItems): Promise<void> {
     if (PrintService.printedOrders.has(order.id)) {
       throw new Error('KOT already printed for this order');
     }
@@ -281,14 +280,17 @@ export class PrintService {
             <div class="divider"></div>
             <div class="items">
               ${Array.isArray(order.items) && order.items.length > 0
-                ? order.items.map(item => `
-                    <div class="item">
-                      <div>
-                        <span>${item.quantity}x ${item.name}</span>
-                        ${item.notes ? `<div class="notes">Note: ${item.notes}</div>` : ''}
+                ? order.items.map(item => {
+                    const formattedItem = PrintService.formatItem(item);
+                    return `
+                      <div class="item">
+                        <div>
+                          <span>${formattedItem.quantity}x ${formattedItem.name}</span>
+                          ${formattedItem.notes ? `<div class="notes">Note: ${formattedItem.notes}</div>` : ''}
+                        </div>
                       </div>
-                    </div>
-                  `).join('')
+                    `;
+                  }).join('')
                 : '<div>No items found</div>'
               }
             </div>
@@ -313,7 +315,7 @@ export class PrintService {
     PrintService.printedOrders.add(order.id);
   }
 
-  public static async reprintKOT(order: Order): Promise<void> {
+  public static async reprintKOT(order: OrderWithItems): Promise<void> {
     const password = prompt('Enter the security password to reprint the order:');
     if (password !== 'admin') {
       throw new Error('Incorrect password');
@@ -322,7 +324,7 @@ export class PrintService {
     await PrintService.printKOT(order);
   }
 
-  public static async printBill(order: Order): Promise<void> {
+  public static async printBill(order: OrderWithItems): Promise<void> {
     if (PrintService.config.type === 'thermal') {
       const content = PrintService.formatThermalContent(order, false);
       await PrintService.printThermal(content);
@@ -389,50 +391,45 @@ export class PrintService {
             <div class="divider"></div>
             <div class="items">
               ${Array.isArray(order.items) && order.items.length > 0
-                ? order.items.map(item => `
-                    <div class="item">
-                      <div>
-                        <span>${item.quantity}x ${item.name}</span>
-                        ${item.notes ? `<div class="notes">Note: ${item.notes}</div>` : ''}
+                ? order.items.map(item => {
+                    const formattedItem = PrintService.formatItem(item);
+                    return `
+                      <div class="item">
+                        <div>
+                          <span>${formattedItem.quantity}x ${formattedItem.name}</span>
+                          ${formattedItem.notes ? `<div class="notes">Note: ${formattedItem.notes}</div>` : ''}
+                        </div>
+                        <span>₹${(formattedItem.price * formattedItem.quantity).toFixed(2)}</span>
                       </div>
-                      <span>₹${(item.price * item.quantity).toFixed(2)}</span>
-                    </div>
-                  `).join('')
+                    `;
+                  }).join('')
                 : '<div>No items found</div>'
               }
             </div>
             <div class="divider"></div>
             <div class="totals">
-              <div class="total-line">
-                <span>Subtotal:</span>
-                <span>₹${order.subtotal.toFixed(2)}</span>
-              </div>
-              <div class="total-line">
-                <span>CGST:</span>
-                <span>₹${order.tax.toFixed(2)}</span>
-              </div>
-              ${order.additional_charges > 0 ? `
-                <div class="total-line">
-                  <span>Additional Charges:</span>
-                  <span>₹${order.additional_charges.toFixed(2)}</span>
-                </div>
-              ` : ''}
-              ${order.discount > 0 ? `
-                <div class="total-line">
-                  <span>Discount:</span>
-                  <span>-₹${order.discount.toFixed(2)}</span>
-                </div>
-              ` : ''}
-              <div class="divider"></div>
-              <div class="total-line" style="font-size: 1.2em;">
-                <span>Total:</span>
-                <span>₹${order.total.toFixed(2)}</span>
-              </div>
+              ${(() => {
+                const totals = PrintService.calculateOrderTotals(order);
+                return `
+                  <div class="total-line">
+                    <span>Subtotal:</span>
+                    <span>₹${totals.subtotal.toFixed(2)}</span>
+                  </div>
+                  <div class="total-line">
+                    <span>CGST (5%):</span>
+                    <span>₹${totals.tax.toFixed(2)}</span>
+                  </div>
+                  <div class="divider"></div>
+                  <div class="total-line" style="font-size: 1.2em;">
+                    <span>Total:</span>
+                    <span>₹${totals.total.toFixed(2)}</span>
+                  </div>
+                `;
+              })()}
             </div>
             <div class="divider"></div>
             <div class="footer">
-              <p>Payment Status: ${order.payment_status.toUpperCase()}</p>
-              ${order.payment_method ? `<p>Payment Method: ${order.payment_method.toUpperCase()}</p>` : ''}
+              <p>Status: ${order.status.toUpperCase()}</p>
               <p>Thank you for dining with us!</p>
             </div>
           </body>

@@ -3,19 +3,35 @@ import { MenuItem } from '../types';
 import { MENU_ITEMS } from '../config/menu';
 import { v4 as uuidv4 } from 'uuid';
 
+const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+const menuCache = new Map<string, { items: MenuItem[], timestamp: number }>();
+
 export class MenuService {
-  static async initializeMenuItems(franchiseId: string): Promise<void> {
+  private static isCacheValid(franchiseId: string): boolean {
+    const cached = menuCache.get(franchiseId);
+    if (!cached) return false;
+    return Date.now() - cached.timestamp < CACHE_TTL;
+  }
+
+  private static setCache(franchiseId: string, items: MenuItem[]) {
+    menuCache.set(franchiseId, {
+      items,
+      timestamp: Date.now()
+    });
+  }
+
+  private static async checkAndInitializeMenu(franchiseId: string): Promise<void> {
     try {
-      // Check if menu items exist for this franchise
-      const { data: existingItems, error: checkError } = await supabase
+      // Check if any menu items exist
+      const { count, error: countError } = await supabase
         .from('menu_items')
-        .select('id')
+        .select('*', { count: 'exact', head: true })
         .eq('franchise_id', franchiseId);
 
-      if (checkError) throw checkError;
+      if (countError) throw countError;
 
-      // If no menu items exist, insert default ones
-      if (!existingItems || existingItems.length === 0) {
+      // If no items exist, initialize with default menu
+      if (!count) {
         const now = new Date().toISOString();
         const defaultItems = MENU_ITEMS.map(item => ({
           id: uuidv4(),
@@ -36,39 +52,35 @@ export class MenuService {
         if (insertError) throw insertError;
       }
     } catch (error) {
-      console.error('Error initializing menu items:', error);
+      console.error('Error checking/initializing menu:', error);
       throw error;
     }
   }
 
   static async getMenuItems(franchiseId: string): Promise<MenuItem[]> {
     try {
+      // Check cache first
+      if (this.isCacheValid(franchiseId)) {
+        const cached = menuCache.get(franchiseId);
+        if (cached) return cached.items;
+      }
+
+      // Ensure menu is initialized
+      await this.checkAndInitializeMenu(franchiseId);
+
+      // Fetch menu items
       const { data, error } = await supabase
         .from('menu_items')
         .select('*')
         .eq('franchise_id', franchiseId)
-        .order('category', { ascending: true })
-        .order('name', { ascending: true });
+        .order('category')
+        .order('name');
 
       if (error) throw error;
-      
-      if (!data || data.length === 0) {
-        // Try to initialize menu items if none exist
-        await this.initializeMenuItems(franchiseId);
-        
-        // Try to fetch again after initialization
-        const { data: newData, error: retryError } = await supabase
-          .from('menu_items')
-          .select('*')
-          .eq('franchise_id', franchiseId)
-          .order('category')
-          .order('name');
-          
-        if (retryError) throw retryError;
-        return newData || [];
-      }
 
-      return data;
+      const items = data || [];
+      this.setCache(franchiseId, items);
+      return items;
     } catch (error) {
       console.error('Error getting menu items:', error);
       throw error;
@@ -93,6 +105,9 @@ export class MenuService {
         .single();
       
       if (error) throw error;
+      
+      // Invalidate cache
+      menuCache.delete(franchiseId);
       return data;
     } catch (error) {
       console.error('Error adding menu item:', error);
@@ -113,6 +128,11 @@ export class MenuService {
         .single();
         
       if (error) throw error;
+
+      // Invalidate cache for the franchise
+      if (data.franchise_id) {
+        menuCache.delete(data.franchise_id);
+      }
       return data;
     } catch (error) {
       console.error('Error updating menu item:', error);
@@ -122,12 +142,26 @@ export class MenuService {
 
   static async deleteMenuItems(itemIds: string[]): Promise<void> {
     try {
+      // First get franchise_id to invalidate cache later
+      const { data: items, error: fetchError } = await supabase
+        .from('menu_items')
+        .select('franchise_id')
+        .in('id', itemIds)
+        .single();
+
+      if (fetchError) throw fetchError;
+
       const { error } = await supabase
         .from('menu_items')
         .delete()
         .in('id', itemIds);
         
       if (error) throw error;
+
+      // Invalidate cache
+      if (items?.franchise_id) {
+        menuCache.delete(items.franchise_id);
+      }
     } catch (error) {
       console.error('Error deleting menu items:', error);
       throw error;
@@ -136,6 +170,15 @@ export class MenuService {
 
   static async toggleItemAvailability(itemId: string, isAvailable: boolean): Promise<void> {
     try {
+      // First get franchise_id to invalidate cache later
+      const { data: item, error: fetchError } = await supabase
+        .from('menu_items')
+        .select('franchise_id')
+        .eq('id', itemId)
+        .single();
+
+      if (fetchError) throw fetchError;
+
       const { error } = await supabase
         .from('menu_items')
         .update({ 
@@ -145,6 +188,11 @@ export class MenuService {
         .eq('id', itemId);
         
       if (error) throw error;
+
+      // Invalidate cache
+      if (item?.franchise_id) {
+        menuCache.delete(item.franchise_id);
+      }
     } catch (error) {
       console.error('Error toggling item availability:', error);
       throw error;
@@ -153,14 +201,8 @@ export class MenuService {
 
   static async getBulkCategories(franchiseId: string): Promise<string[]> {
     try {
-      const { data, error } = await supabase
-        .from('menu_items')
-        .select('category')
-        .eq('franchise_id', franchiseId)
-        .order('category');
-
-      if (error) throw error;
-      return Array.from(new Set(data.map(item => item.category)));
+      const items = await this.getMenuItems(franchiseId);
+      return Array.from(new Set(items.map(item => item.category))).sort();
     } catch (error) {
       console.error('Error getting categories:', error);
       throw error;

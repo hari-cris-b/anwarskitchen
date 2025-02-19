@@ -1,130 +1,86 @@
-// Role Types
-export type UserRole = 'admin' | 'manager' | 'staff' | 'kitchen';
-export type ShiftType = 'morning' | 'evening' | 'night' | 'flexible';
-export type StatusType = 'active' | 'inactive' | 'on_leave';
+export type StaffRole = 'super_admin' | 'admin' | 'manager' | 'staff' | 'kitchen';
+export type StaffStatus = 'active' | 'inactive' | 'suspended' | 'on_leave';
 
-export enum StaffRole {
-  MANAGER = 'MANAGER',
-  STAFF = 'STAFF'
+export type CreateStaffDTO = Omit<Staff, 'id' | 'auth_id' | 'created_at' | 'updated_at'>;
+export type UpdateStaffDTO = Partial<CreateStaffDTO> & { id: string };
+export type UserRole = StaffRole;
+
+export interface StaffPermissions {
+  can_access_pos: boolean;
+  can_access_kitchen: boolean;
+  can_access_reports: boolean;
+  can_manage_menu: boolean;
+  can_manage_staff: boolean;
 }
 
-
-export type StaffPermissions = {
-  canManageStaff: boolean;
-  canViewStaff: boolean;
-  canEditStaff: boolean;
-  canDeleteStaff: boolean;
-  canModifyMenu: boolean;
-  canVoidOrders: boolean;
-};
-
-export interface DatabaseStaff {
+export interface Staff {
   id: string;
-  franchise_id: string;
+  franchise_id: string | null;
   auth_id: string | null;
   full_name: string;
-  role: UserRole;
   email: string;
-  phone: string | null;
-  shift: ShiftType | null;
-  hourly_rate: number;
-  status: StatusType;
-  pin_code?: string;
-  created_at: string;
-  updated_at: string;
-  joining_date: string | null;
-  can_manage_staff: boolean;
+  status: StaffStatus;
   can_void_orders: boolean;
   can_modify_menu: boolean;
-}
-
-export interface Staff extends DatabaseStaff {
+  can_manage_staff: boolean;
+  pin_code: string | null;
+  staff_type: StaffRole;
   permissions: StaffPermissions;
+  email_verified: boolean;
+  phone: string | null;
+  shift: string | null;
+  hourly_rate: string | null;
+  joining_date: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
-export interface StaffFormData {
-  franchise_id: string;
-  full_name: string;
-  role: UserRole;
-  email: string;
-  phone: string;
-  shift: ShiftType;
-  hourly_rate: number;
-  status: StatusType;
-  joining_date: string;
-  pin_code?: string;
+export interface DatabaseStaff extends Staff {}
+export interface FrontendStaff extends Staff {}
+
+export type AuthUser = Staff;
+
+export function convertToFrontendStaff(staff: DatabaseStaff): FrontendStaff {
+  return {
+    ...staff,
+    permissions: staff.permissions || ROLE_PERMISSIONS[staff.staff_type]
+  };
 }
 
-export interface CreateStaffDTO {
-  franchise_id: string;
-  full_name: string;
-  role: UserRole;
-  email?: string;
-  phone?: string;
-  shift: ShiftType;
-  hourly_rate: number;
-  status?: StatusType;
-  joining_date?: string;
-  pin_code?: string;
-}
-
-export interface UpdateStaffDTO {
-  id: string;
-  full_name?: string;
-  role?: UserRole;
-  email?: string;
-  phone?: string;
-  shift?: ShiftType;
-  hourly_rate?: number;
-  status?: StatusType;
-  pin_code?: string;
-}
-
-export interface StaffCountByRole {
-  role: UserRole;
-  count: number;
-}
-
-export interface StaffFilters {
-  role?: UserRole;
-  status?: StatusType;
-  shift?: ShiftType;
-}
-
-export const SHIFT_TYPES: ShiftType[] = ['morning', 'evening', 'night', 'flexible'];
-export const STATUS_TYPES: StatusType[] = ['active', 'inactive', 'on_leave'];
-
-export const ROLE_PERMISSIONS: Record<UserRole, StaffPermissions> = {
+export const ROLE_PERMISSIONS: Record<StaffRole, StaffPermissions> = {
+  super_admin: {
+    can_access_pos: true,
+    can_access_kitchen: true,
+    can_access_reports: true,
+    can_manage_menu: true,
+    can_manage_staff: true
+  },
   admin: {
-    canManageStaff: true,
-    canViewStaff: true,
-    canEditStaff: true,
-    canDeleteStaff: true,
-    canModifyMenu: true,
-    canVoidOrders: true
+    can_access_pos: true,
+    can_access_kitchen: true,
+    can_access_reports: true,
+    can_manage_menu: true,
+    can_manage_staff: true
   },
   manager: {
-    canManageStaff: true,
-    canViewStaff: true,
-    canEditStaff: true,
-    canDeleteStaff: false,
-    canModifyMenu: true,
-    canVoidOrders: true
+    can_access_pos: true,
+    can_access_kitchen: true,
+    can_access_reports: true,
+    can_manage_menu: false,
+    can_manage_staff: false
   },
   staff: {
-    canManageStaff: false,
-    canViewStaff: true,
-    canEditStaff: false,
-    canDeleteStaff: false,
-    canModifyMenu: false,
-    canVoidOrders: false
+    can_access_pos: true,
+    can_access_kitchen: false,
+    can_access_reports: false,
+    can_manage_menu: false,
+    can_manage_staff: false
   },
   kitchen: {
-    canManageStaff: false,
-    canViewStaff: true,
-    canEditStaff: false,
-    canDeleteStaff: false,
-    canModifyMenu: false,
-    canVoidOrders: false
+    can_access_pos: false,
+    can_access_kitchen: true,
+    can_access_reports: false,
+    can_manage_menu: false,
+    can_manage_staff: false
   }
 };

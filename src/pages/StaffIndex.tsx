@@ -9,7 +9,7 @@ const StaffPage = React.lazy(() => import('./Staff'));
 export const StaffIndex: React.FC = () => {
   const { profile } = useAuth();
 
-  if (!profile?.role || profile.role !== 'admin') {
+  if (!profile?.staff_type || profile.staff_type !== 'admin') {
     return <Navigate to="/unauthorized" replace />;
   }
 
