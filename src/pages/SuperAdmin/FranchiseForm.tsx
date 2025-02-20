@@ -1,265 +1,221 @@
 import React from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
-import { useForm } from 'react-hook-form';
-import { toast } from 'react-hot-toast';
-import type { Database } from '../../types/database.types';
-
-type Tables = Database['public']['Tables'];
-type Franchise = Tables['franchises']['Row'];
-type FranchiseInsert = Tables['franchises']['Insert'];
+import { useParams, useNavigate } from 'react-router-dom';
+import Button from '../../components/Button';
+import ErrorAlert from '../../components/ErrorAlert';
 import { franchisorService } from '../../services/franchisorService';
+import type { FranchiseCreateInput, FranchiseDetail } from '../../types/franchise';
 
-interface FranchiseFormData extends Partial<FranchiseInsert> {
-  admin_email: string;
-  admin_name: string;
-}
-
-export default function FranchiseForm() {
+const FranchiseForm: React.FC = () => {
   const { id } = useParams();
   const navigate = useNavigate();
-  const isEditing = Boolean(id);
+  const [loading, setLoading] = React.useState(true);
+  const [saving, setSaving] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+  const [franchise, setFranchise] = React.useState<FranchiseDetail | null>(null);
 
-  const defaultValues: Partial<FranchiseFormData> = {
-    status: 'active',
-  };
-
-  const {
-    register,
-    handleSubmit,
-    formState: { errors, isSubmitting },
-    reset
-  } = useForm<FranchiseFormData>({
-    defaultValues
+  const [formData, setFormData] = React.useState<FranchiseCreateInput>({
+    name: '',
+    address: '',
+    email: '',
+    phone: '',
+    settings: {
+      subscription_status: 'active',
+      tax_rate: 0,
+      currency: 'INR',
+    }
   });
 
   React.useEffect(() => {
-    if (isEditing && id) {
-      loadFranchise(id);
-    }
+    const loadFranchise = async () => {
+      if (!id) {
+        setLoading(false);
+        return;
+      }
+
+      try {
+        const data = await franchisorService.getFranchiseById(id);
+        setFranchise(data);
+        setFormData({
+          name: data.name,
+          address: data.address,
+          email: data.email,
+          phone: data.phone,
+          settings: data.settings
+        });
+      } catch (err) {
+        setError('Failed to load franchise details');
+        console.error('Error loading franchise:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    void loadFranchise();
   }, [id]);
 
-  const loadFranchise = async (franchiseId: string) => {
-    try {
-      const franchise = await franchisorService.getFranchiseById(franchiseId);
-      if (franchise) {
-        // Get the admin user for this franchise
-        const staffMembers = await franchisorService.getStaffByFranchise(franchiseId);
-        const admin = staffMembers.find(staff => staff.staff_type === 'admin');
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    setError(null);
 
-        // Set form values
-        reset({
-          ...franchise,
-          admin_name: admin?.full_name || '',
-          admin_email: admin?.email || ''
-        });
+    try {
+      if (id) {
+        // Update franchise
+        await franchisorService.updateFranchiseSettings(id, formData.settings);
+      } else {
+        // Create new franchise
+        await franchisorService.createFranchise(formData);
       }
-    } catch (err) {
-      console.error('Error loading franchise:', err);
-      toast.error('Failed to load franchise details');
       navigate('/super-admin/franchises');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save franchise');
+    } finally {
+      setSaving(false);
     }
   };
 
-  const onSubmit = async (data: FranchiseFormData) => {
-    try {
-      const { admin_name, admin_email, ...franchiseData } = data;
-
-      if (!isEditing) {
-        const newFranchise: FranchiseInsert & { admin_name: string; admin_email: string } = {
-          name: franchiseData.name,
-          address: franchiseData.address,
-          phone: franchiseData.phone,
-          email: franchiseData.email,
-          status: franchiseData.status || 'active',
-          admin_name,
-          admin_email
-        };
-        await franchisorService.createFranchise(newFranchise);
-        toast.success('Franchise created successfully');
-      } else if (id) {
-        await franchisorService.updateFranchise(id, franchiseData);
-        
-        // Update admin user if it exists
-        const staffMembers = await franchisorService.getStaffByFranchise(id);
-        const admin = staffMembers.find(staff => staff.staff_type === 'admin');
-        if (admin) {
-          await franchisorService.updateStaffMember(admin.id, {
-            full_name: admin_name,
-            email: admin_email
-          });
-        }
-        toast.success('Franchise updated successfully');
-      }
-
-      navigate('/super-admin/franchises');
-    } catch (err) {
-      console.error('Error saving franchise:', err);
-      toast.error(err instanceof Error ? err.message : 'Failed to save franchise');
-    }
-  };
+  if (loading) {
+    return (
+      <div className="flex justify-center items-center min-h-[400px]">
+        <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-gray-900"></div>
+      </div>
+    );
+  }
 
   return (
-    <div className="p-6">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold mb-2">
-          {isEditing ? 'Edit Franchise' : 'Add New Franchise'}
-        </h1>
-        <p className="text-gray-600">
-          {isEditing 
-            ? 'Update franchise details and settings'
-            : 'Create a new franchise in your network'
-          }
-        </p>
+    <div className="max-w-2xl mx-auto">
+      <div className="md:flex md:items-center md:justify-between mb-8">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">
+            {id ? 'Edit Franchise' : 'New Franchise'}
+          </h1>
+          <p className="mt-1 text-sm text-gray-500">
+            {id ? 'Update franchise details' : 'Create a new franchise location'}
+          </p>
+        </div>
       </div>
 
-      <div className="bg-white rounded-lg shadow-sm p-6">
-        <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
-          <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-            {/* Franchise Details */}
-            <div className="space-y-6">
-              <h3 className="text-lg font-medium">Franchise Details</h3>
+      {error && <ErrorAlert message={error} className="mb-6" />}
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700">
-                  Franchise Name *
-                </label>
-                <input
-                  type="text"
-                  {...register('name', { required: 'Name is required' })}
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-orange-500 focus:ring-orange-500"
-                />
-                {errors.name && (
-                  <p className="mt-1 text-sm text-red-600">{errors.name.message}</p>
-                )}
-              </div>
+      <form onSubmit={handleSubmit} className="space-y-6 bg-white shadow-sm rounded-lg p-6">
+        <div>
+          <label htmlFor="name" className="block text-sm font-medium text-gray-700">
+            Franchise Name
+          </label>
+          <input
+            type="text"
+            name="name"
+            id="name"
+            required
+            value={formData.name}
+            onChange={e => setFormData(prev => ({ ...prev, name: e.target.value }))}
+            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+          />
+        </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700">
-                  Address *
-                </label>
-                <textarea
-                  {...register('address', { required: 'Address is required' })}
-                  rows={3}
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-orange-500 focus:ring-orange-500"
-                />
-                {errors.address && (
-                  <p className="mt-1 text-sm text-red-600">{errors.address.message}</p>
-                )}
-              </div>
+        <div>
+          <label htmlFor="address" className="block text-sm font-medium text-gray-700">
+            Address
+          </label>
+          <textarea
+            name="address"
+            id="address"
+            required
+            value={formData.address}
+            onChange={e => setFormData(prev => ({ ...prev, address: e.target.value }))}
+            rows={3}
+            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+          />
+        </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700">
-                  Phone *
-                </label>
-                <input
-                  type="tel"
-                  {...register('phone', { 
-                    required: 'Phone is required',
-                    pattern: {
-                      value: /^[0-9]{10}$/,
-                      message: 'Please enter a valid 10-digit phone number'
-                    }
-                  })}
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-orange-500 focus:ring-orange-500"
-                />
-                {errors.phone && (
-                  <p className="mt-1 text-sm text-red-600">{errors.phone.message}</p>
-                )}
-              </div>
+        <div>
+          <label htmlFor="email" className="block text-sm font-medium text-gray-700">
+            Contact Email
+          </label>
+          <input
+            type="email"
+            name="email"
+            id="email"
+            required
+            value={formData.email}
+            onChange={e => setFormData(prev => ({ ...prev, email: e.target.value }))}
+            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+          />
+        </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700">
-                  Email *
-                </label>
-                <input
-                  type="email"
-                  {...register('email', {
-                    required: 'Email is required',
-                    pattern: {
-                      value: /^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i,
-                      message: 'Please enter a valid email address'
-                    }
-                  })}
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-orange-500 focus:ring-orange-500"
-                />
-                {errors.email && (
-                  <p className="mt-1 text-sm text-red-600">{errors.email.message}</p>
-                )}
-              </div>
-            </div>
+        <div>
+          <label htmlFor="phone" className="block text-sm font-medium text-gray-700">
+            Contact Phone
+          </label>
+          <input
+            type="tel"
+            name="phone"
+            id="phone"
+            required
+            value={formData.phone}
+            onChange={e => setFormData(prev => ({ ...prev, phone: e.target.value }))}
+            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+          />
+        </div>
 
-            {/* Admin Details */}
-            <div className="space-y-6">
-              <h3 className="text-lg font-medium">Admin Details</h3>
+        <div>
+          <label htmlFor="tax_rate" className="block text-sm font-medium text-gray-700">
+            Tax Rate (%)
+          </label>
+          <input
+            type="number"
+            name="tax_rate"
+            id="tax_rate"
+            min="0"
+            max="100"
+            step="0.01"
+            value={formData.settings.tax_rate || 0}
+            onChange={e => setFormData(prev => ({
+              ...prev,
+              settings: { ...prev.settings, tax_rate: parseFloat(e.target.value) }
+            }))}
+            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+          />
+        </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700">
-                  Admin Name *
-                </label>
-                <input
-                  type="text"
-                  {...register('admin_name', { required: 'Admin name is required' })}
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-orange-500 focus:ring-orange-500"
-                />
-                {errors.admin_name && (
-                  <p className="mt-1 text-sm text-red-600">{errors.admin_name.message}</p>
-                )}
-              </div>
+        <div>
+          <label htmlFor="status" className="block text-sm font-medium text-gray-700">
+            Status
+          </label>
+          <select
+            id="status"
+            name="status"
+            value={formData.settings.subscription_status}
+            onChange={e => setFormData(prev => ({
+              ...prev,
+              settings: { ...prev.settings, subscription_status: e.target.value as any }
+            }))}
+            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+          >
+            <option value="active">Active</option>
+            <option value="inactive">Inactive</option>
+            <option value="suspended">Suspended</option>
+          </select>
+        </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700">
-                  Admin Email *
-                </label>
-                <input
-                  type="email"
-                  {...register('admin_email', {
-                    required: 'Admin email is required',
-                    pattern: {
-                      value: /^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i,
-                      message: 'Please enter a valid email address'
-                    }
-                  })}
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-orange-500 focus:ring-orange-500"
-                />
-                {errors.admin_email && (
-                  <p className="mt-1 text-sm text-red-600">{errors.admin_email.message}</p>
-                )}
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700">
-                  Status
-                </label>
-                <select
-                  {...register('status')}
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-orange-500 focus:ring-orange-500"
-                >
-                  <option value="active">Active</option>
-                  <option value="inactive">Inactive</option>
-                  <option value="suspended">Suspended</option>
-                </select>
-              </div>
-            </div>
-          </div>
-
-          <div className="flex justify-end space-x-3 pt-6">
-            <button
-              type="button"
-              onClick={() => navigate('/super-admin/franchises')}
-              className="px-4 py-2 border rounded-md hover:bg-gray-50"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={isSubmitting}
-              className="px-4 py-2 bg-orange-500 text-white rounded-md hover:bg-orange-600 disabled:opacity-50"
-            >
-              {isSubmitting ? 'Saving...' : isEditing ? 'Update Franchise' : 'Create Franchise'}
-            </button>
-          </div>
-        </form>
-      </div>
+        <div className="flex justify-end space-x-3">
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() => navigate('/super-admin/franchises')}
+          >
+            Cancel
+          </Button>
+          <Button
+            type="submit"
+            disabled={saving}
+          >
+            {saving ? 'Saving...' : (id ? 'Update Franchise' : 'Create Franchise')}
+          </Button>
+        </div>
+      </form>
     </div>
   );
-}
+};
+
+export default FranchiseForm;

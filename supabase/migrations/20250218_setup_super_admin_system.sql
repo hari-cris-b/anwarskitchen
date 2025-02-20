@@ -38,7 +38,7 @@ CREATE TABLE IF NOT EXISTS public.super_admin_activity (
 );
 
 -- 4. Create core check function
-CREATE OR REPLACE FUNCTION check_super_admin(check_auth_id uuid)
+CREATE OR REPLACE FUNCTION is_super_admin(check_auth_id uuid)
 RETURNS boolean
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -176,18 +176,18 @@ ALTER TABLE public.super_admin_activity ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Super admins can view all super admin records" ON public.super_admin;
 CREATE POLICY "Super admins can view all super admin records"
 ON public.super_admin FOR SELECT
-USING (check_super_admin(auth.uid()));
+USING (is_super_admin(auth.uid()));
 
 DROP POLICY IF EXISTS "Super admins can view all activity logs" ON public.super_admin_activity;
 CREATE POLICY "Super admins can view all activity logs"
 ON public.super_admin_activity FOR SELECT
-USING (check_super_admin(auth.uid()));
+USING (is_super_admin(auth.uid()));
 
 -- 10. Grant permissions
 GRANT USAGE ON SCHEMA public TO authenticated;
 GRANT ALL ON public.super_admin TO authenticated;
 GRANT ALL ON public.super_admin_activity TO authenticated;
-GRANT EXECUTE ON FUNCTION check_super_admin TO authenticated;
+GRANT EXECUTE ON FUNCTION is_super_admin(uuid) TO authenticated;
 GRANT EXECUTE ON FUNCTION ensure_super_admin TO authenticated;
 GRANT EXECUTE ON FUNCTION link_super_admin_with_auth TO authenticated;
 GRANT EXECUTE ON FUNCTION log_super_admin_activity TO authenticated;

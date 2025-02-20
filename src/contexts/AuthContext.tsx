@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Session, AuthChangeEvent } from '@supabase/supabase-js';
 import { 
@@ -41,18 +41,39 @@ const AUTH_RETRY_COUNT = 3;
 const PROFILE_LOAD_TIMEOUT = REQUEST_CONFIG.AUTH_TIMEOUT;
 const MAX_PROFILE_RETRIES = 2;
 
-class ProfileManager {
-  private static cache = new Map<string, { data: AuthUser; timestamp: number }>();
-  private static readonly storageKey = 'pos_profile_cache';
+interface CacheEntry {
+  data: AuthUser;
+  mode: LoginMode;
+  timestamp: number;
+}
 
-  static initialize(): void {
+class ProfileManager {
+  private static cache = new Map<string, CacheEntry>();
+  private static readonly storageKey = 'pos_profile_cache';
+  private static readonly modeKey = 'pos_login_mode';
+
+  static initialize(setMode: (mode: LoginMode) => void): void {
     try {
       const cached = localStorage.getItem(this.storageKey);
+      const mode = localStorage.getItem(this.modeKey) as LoginMode;
+      
       if (cached) {
         const parsed = JSON.parse(cached);
         Object.entries(parsed).forEach(([key, value]) => {
-          this.cache.set(key, value as { data: AuthUser; timestamp: number });
+          const entry = value as CacheEntry;
+          this.cache.set(key, entry);
+          
+          // Use mode from cache entry if available
+          if (entry.mode === 'super_admin') {
+            setMode('super_admin');
+            return; // Exit early if super_admin found
+          }
         });
+      }
+      
+      // Fallback to stored mode if no super_admin found in cache
+      if (mode === 'staff' || mode === 'super_admin') {
+        setMode(mode);
       }
     } catch (err) {
       console.warn('Failed to load cached profiles:', err);
@@ -60,17 +81,18 @@ class ProfileManager {
     }
   }
 
-  static get(userId: string): AuthUser | null {
+  static get(userId: string): { profile: AuthUser | null; mode: LoginMode | null } {
     const cached = this.cache.get(userId);
     if (cached && Date.now() - cached.timestamp < PROFILE_CACHE_DURATION) {
-      return cached.data;
+      return { profile: cached.data, mode: cached.mode };
     }
     this.cache.delete(userId);
-    return null;
+    return { profile: null, mode: null };
   }
 
-  static set(userId: string, profile: AuthUser): void {
-    this.cache.set(userId, { data: profile, timestamp: Date.now() });
+  static set(userId: string, profile: AuthUser, mode: LoginMode): void {
+    this.cache.set(userId, { data: profile, mode, timestamp: Date.now() });
+    localStorage.setItem(this.modeKey, mode);
     this.persist();
   }
 
@@ -79,6 +101,7 @@ class ProfileManager {
       this.cache.delete(userId);
     } else {
       this.cache.clear();
+      localStorage.removeItem(this.modeKey);
     }
     this.persist();
   }
@@ -92,8 +115,6 @@ class ProfileManager {
     }
   }
 }
-
-ProfileManager.initialize();
 
 export interface AuthProviderProps {
   children: React.ReactNode;
@@ -109,6 +130,14 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const loadingRef = useRef(false);
   const loginModeRef = useRef<LoginMode>('staff');
 
+  const setLoginMode = useCallback((mode: LoginMode) => {
+    loginModeRef.current = mode;
+  }, []);
+
+  useEffect(() => {
+    ProfileManager.initialize(setLoginMode);
+  }, [setLoginMode]);
+
   const isLoginPage = location.pathname === '/login';
 
   const loadUserProfile = useCallback(async (userId: string, mode?: LoginMode) => {
@@ -118,12 +147,34 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     try {
       console.log('Loading user profile:', { userId, mode });
 
-      let currentProfile = ProfileManager.get(userId);
-      if (currentProfile) {
-        console.log('Using cached profile:', currentProfile);
-        setProfile(currentProfile);
-        setError(null);
-        return;
+      const { profile: cachedProfile, mode: cachedMode } = ProfileManager.get(userId);
+      if (cachedProfile) {
+        // Super admins always use their profile regardless of mode
+        if (cachedProfile.staff_type === 'super_admin') {
+          console.log('Using cached super admin profile:', {
+            userType: cachedProfile.staff_type,
+            requestedMode: mode
+          });
+          setProfile(cachedProfile);
+          loginModeRef.current = 'super_admin';
+          setError(null);
+          return;
+        }
+        
+        // For staff, ensure mode matches
+        if (mode === cachedMode) {
+          console.log('Using cached staff profile:', {
+            profile: cachedProfile,
+            mode: cachedMode,
+            userType: cachedProfile.staff_type
+          });
+          setProfile(cachedProfile);
+          loginModeRef.current = cachedMode;
+          setError(null);
+          return;
+        }
+        // Clear cache if mode mismatch
+        ProfileManager.clear(userId);
       }
 
       const fetchProfile = async (): Promise<DatabaseStaff> => {
@@ -240,7 +291,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         isAuth: true
       });
 
-      ProfileManager.set(userId, userData);
+      const effectiveMode = mode || loginModeRef.current;
+      ProfileManager.set(userId, userData, effectiveMode);
       setProfile(userData);
       setError(null);
 
@@ -284,7 +336,13 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       case 'USER_UPDATED':
         // Handle events that might need profile loading
         if (newSession?.user?.id) {
-          await loadUserProfile(newSession.user.id, loginModeRef.current);
+          const currentProfile = profile;
+          // Always preserve super admin status
+          const effectiveMode = currentProfile?.staff_type === 'super_admin'
+            ? 'super_admin'
+            : loginModeRef.current;
+            
+          await loadUserProfile(newSession.user.id, effectiveMode);
         }
         setLoading(false);
         break;
@@ -314,8 +372,14 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           console.log('Found initial session:', initialSession.user.id);
           setSession(initialSession);
           
+          // Check for cached super admin profile first
+          const { profile: cachedProfile } = ProfileManager.get(initialSession.user.id);
+          const effectiveMode = cachedProfile?.staff_type === 'super_admin'
+            ? 'super_admin'
+            : loginModeRef.current;
+            
           // Keep loading true until profile is loaded
-          const profilePromise = loadUserProfile(initialSession.user.id, loginModeRef.current);
+          const profilePromise = loadUserProfile(initialSession.user.id, effectiveMode);
           
           const { data: { subscription } } = supabase.auth.onAuthStateChange(handleAuthStateChange);
           if (!subscription) {

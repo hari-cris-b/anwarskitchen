@@ -571,7 +571,52 @@ END;
 $$ LANGUAGE plpgsql;
 ```
 
-### 10. get_orders_with_items
+### 10. get_total_revenue_last_30_days
+
+Returns the total revenue from completed orders within the last 30 days. Only accessible to super admin users.
+
+```sql
+CREATE OR REPLACE FUNCTION public.get_total_revenue_last_30_days()
+RETURNS numeric
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_total numeric;
+  v_user_id uuid;
+BEGIN
+  -- Get current user
+  v_user_id := auth.uid();
+  
+  -- Check if user has super admin role
+  IF NOT EXISTS (
+    SELECT 1 FROM public.super_admin
+    WHERE auth_id = v_user_id
+  ) THEN
+    RAISE EXCEPTION 'Access denied: Super admin privileges required';
+  END IF;
+
+  -- Get total revenue with proper handling of nulls
+  SELECT COALESCE(SUM(COALESCE(total, 0)), 0)
+  INTO v_total
+  FROM public.orders o
+  WHERE
+    o.created_at >= NOW() - INTERVAL '30 days'
+    AND o.status NOT IN ('cancelled');
+
+  RETURN v_total;
+EXCEPTION
+  WHEN OTHERS THEN
+    -- Log error details
+    RAISE WARNING 'Error in get_total_revenue_last_30_days: %', SQLERRM;
+    -- Return 0 instead of failing
+    RETURN 0;
+END;
+$$;
+```
+
+### 11. get_orders_with_items
 
 Retrieves orders with their associated menu items in a structured JSON format. This function:
 - Joins orders with their items and menu details

@@ -1,284 +1,520 @@
 import { supabase } from '../lib/supabase';
+import {
+  handleApiResponse,
+  handleApiArrayResponse,
+  handleApiSingleResponse,
+  handleRpcResponse
+} from '../utils/apiUtils';
 import type {
   FranchiseOverview,
-  FranchiseStats,
+  FranchiseDetail,
   DashboardStats,
   FranchiseSettings,
-  FranchiseStatus,
-  TopPerformingFranchise,
   FranchiseCreateInput,
-  FranchiseWithSettings
+  FranchiseStatus,
+  FranchiseQueryResult
 } from '../types/franchise';
+import { ValidationError, AuthorizationError, DatabaseError } from '../types/errors';
+import { withRetry } from '../utils/retryUtils';
 
-interface LogActivityParams {
-  actionType: 'login' | 'franchise_create' | 'franchise_update' | 'franchise_delete' | 'staff_manage' | 'settings_update' | 'report_access';
-  details: Record<string, any>;
+interface TopPerformer {
+  franchise_id: string;
+  franchise_name: string;
+  total_revenue: number;
+  order_count: number;
+  average_order_value: number;
 }
 
-// Database query result types
-interface FranchiseQueryResult {
-  id: string;
-  name: string;
-  address: string;
-  created_at: string;
-  franchise_settings: Array<{
-    email: string;
-    phone: string;
-  }> | null;
-  staff_count: number;
-  total_revenue: number;
-  settings: {
-    subscription_status: FranchiseStatus;
-  };
+function isNumber(data: unknown): data is number {
+  return typeof data === 'number';
+}
+
+function isTopPerformer(data: unknown): data is TopPerformer {
+  if (!data || typeof data !== 'object') return false;
+  const performer = data as Partial<TopPerformer>;
+  return (
+    typeof performer.franchise_id === 'string' &&
+    typeof performer.franchise_name === 'string' &&
+    typeof performer.total_revenue === 'number' &&
+    typeof performer.order_count === 'number' &&
+    typeof performer.average_order_value === 'number'
+  );
+}
+
+function isTopPerformerArray(data: unknown): data is TopPerformer[] {
+  return Array.isArray(data) && data.every(isTopPerformer);
 }
 
 class FranchisorService {
-  private async logActivity({ actionType, details }: LogActivityParams): Promise<void> {
+  // Dashboard metrics
+  getDashboardStats = async (): Promise<DashboardStats> => {
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session?.user?.id) return;
+      console.debug('Fetching dashboard stats');
 
-      const { data: superAdmin } = await supabase
-        .from('super_admin')
-        .select('id')
-        .eq('auth_id', session.user.id)
-        .single();
+      const [
+        franchisesResult,
+        revenueTotalResult,
+        staffCountResult,
+        recentFranchisesResult,
+        topPerformersResult
+      ] = await Promise.allSettled([
+        handleApiArrayResponse(
+          supabase
+            .from('franchises')
+            .select('id, name, created_at, settings'),
+          'fetching franchises'
+        ),
+        this.getFranchiseRevenue(30),
+        this.getFranchiseStaffCount(),
+        this.getRecentFranchises(5),
+        this.getTopPerformers(30, 5)
+      ]);
 
-      if (!superAdmin?.id) return;
+      // Handle results
+      const franchises = franchisesResult.status === 'fulfilled' ? franchisesResult.value : [];
+      const revenueTotal = revenueTotalResult.status === 'fulfilled' ? revenueTotalResult.value : 0;
+      const staffCount = staffCountResult.status === 'fulfilled' ? staffCountResult.value : 0;
+      const recentFranchises = recentFranchisesResult.status === 'fulfilled' ? recentFranchisesResult.value : [];
+      const topPerformers = topPerformersResult.status === 'fulfilled' ? topPerformersResult.value : [];
 
-      await supabase.rpc('log_super_admin_activity', {
-        p_super_admin_id: superAdmin.id,
-        p_action_type: actionType,
-        p_action_details: details,
-        p_ip_address: null
+      console.debug('Dashboard stats loaded:', {
+        franchiseCount: franchises.length,
+        revenue: revenueTotal,
+        staff: staffCount,
+        recent: recentFranchises.length,
+        top: topPerformers.length
       });
+
+      return {
+        totalFranchises: franchises.length,
+        activeFranchises: franchises.filter(f =>
+          f.settings.subscription_status === 'active'
+        ).length,
+        totalRevenue: revenueTotal,
+        totalStaff: staffCount,
+        recentFranchises: recentFranchises.map(f => ({
+          id: f.id,
+          name: f.name,
+          created_at: f.created_at,
+          status: f.settings.subscription_status as FranchiseStatus
+        })),
+        topPerformers: topPerformers.map(f => ({
+          id: f.franchise_id,
+          name: f.franchise_name,
+          revenue: f.total_revenue,
+          orders: f.order_count,
+          averageOrderValue: f.average_order_value
+        }))
+      };
     } catch (error) {
-      console.error('Failed to log super admin activity:', error);
+      console.error('Failed to fetch dashboard stats:', error);
+      throw error;
     }
   }
 
   async getFranchiseOverview(): Promise<FranchiseOverview[]> {
-    // First get franchise basic info with settings
-    const { data: franchises, error: franchiseError } = await supabase
-      .from('franchises')
-      .select(`
-        id,
-        name,
-        address,
-        created_at,
-        settings,
-        franchise_settings (
-          email,
-          phone
-        )
-      `)
-      .order('created_at', { ascending: false });
+    try {
+      console.debug('Fetching franchise overview');
+      
+      // Get basic franchise info including settings
+      const franchises = await withRetry(
+        () => handleApiArrayResponse<{
+          id: string;
+          name: string;
+          address: string;
+          created_at: string;
+          settings: FranchiseSettings;
+        }>(
+          supabase
+            .from('franchises')
+            .select('id, name, address, created_at, settings')
+            .order('created_at', { ascending: false }),
+          'fetching franchises'
+        ),
+        {
+          maxRetries: 3,
+          delayMs: 1500,
+          shouldRetry: (error: Error) =>
+            error instanceof AuthorizationError ||
+            (error instanceof DatabaseError && error.message.includes('permission'))
+        }
+      );
 
-    if (franchiseError) throw franchiseError;
+      // Get staff counts and revenue totals
+      const [settings, staffCounts, revenueTotals] = await Promise.all([
+        // Contact settings
+        handleApiArrayResponse<{
+          franchise_id: string;
+          email: string;
+          phone: string;
+        }>(
+          supabase
+            .from('franchise_settings')
+            .select('franchise_id, email, phone'),
+          'fetching franchise settings'
+        ),
+        // Staff counts
+        withRetry(
+          () => handleApiArrayResponse<{ franchise_id: string; count: number }>(
+            supabase.rpc('get_franchise_staff_counts'),
+            'fetching staff counts'
+          ),
+          {
+            maxRetries: 3,
+            delayMs: 1500,
+            shouldRetry: (error: Error) =>
+              error instanceof AuthorizationError ||
+              (error instanceof DatabaseError && error.message.includes('permission'))
+          }
+        ).catch(error => {
+          console.error('Staff counts fetch error:', error);
+          return [];
+        }),
+        // Revenue totals
+        withRetry(
+          () => handleApiArrayResponse<{ franchise_id: string; total: number }>(
+            supabase.rpc('get_franchise_revenue_totals'),
+            'fetching revenue totals'
+          ),
+          {
+            maxRetries: 3,
+            delayMs: 1500,
+            shouldRetry: (error: Error) =>
+              error instanceof AuthorizationError ||
+              (error instanceof DatabaseError && error.message.includes('permission'))
+          }
+        ).catch(error => {
+          console.error('Revenue totals fetch error:', error);
+          return [];
+        })
+      ]);
 
-    // Get staff counts
-    const { data: staffCounts, error: staffError } = await supabase
-      .from('staff')
-      .select('franchise_id, count')
-      .select('count(*)', { count: 'exact', head: false })
-      .groupBy('franchise_id');
+      // Return enriched data
+      return franchises.map(franchise => {
+        const franchiseSettings = settings.find(s => s.franchise_id === franchise.id);
+        const staffCount = staffCounts.find(s => s.franchise_id === franchise.id);
+        const revenue = revenueTotals.find(r => r.franchise_id === franchise.id);
 
-    if (staffError) throw staffError;
-
-    // Get revenue totals
-    const { data: revenueTotals, error: revenueError } = await supabase
-      .from('orders')
-      .select('franchise_id, sum(total)')
-      .groupBy('franchise_id');
-
-    if (revenueError) throw revenueError;
-
-    // Combine the data
-    const staffCountMap = new Map(
-      staffCounts?.map(({ franchise_id, count }) => [franchise_id, count]) || []
-    );
-    const revenueTotalMap = new Map(
-      revenueTotals?.map(({ franchise_id, sum }) => [franchise_id, sum]) || []
-    );
-
-    await this.logActivity({
-      actionType: 'report_access',
-      details: { report: 'franchise_overview' }
-    });
-
-    return (franchises || []).map(franchise => ({
-      id: franchise.id,
-      name: franchise.name,
-      address: franchise.address,
-      created_at: franchise.created_at,
-      email: franchise.franchise_settings?.[0]?.email || '',
-      phone: franchise.franchise_settings?.[0]?.phone || '',
-      total_staff: staffCountMap.get(franchise.id) || 0,
-      total_revenue: revenueTotalMap.get(franchise.id) || 0,
-      status: franchise.settings?.subscription_status || 'inactive'
-    }));
+        return {
+          id: franchise.id,
+          name: franchise.name,
+          address: franchise.address,
+          created_at: franchise.created_at,
+          email: franchiseSettings?.email || '',
+          phone: franchiseSettings?.phone || '',
+          total_staff: staffCount?.count || 0,
+          total_revenue: revenue?.total || 0,
+          status: franchise.settings.subscription_status
+        };
+      });
+    } catch (error) {
+      console.error('Failed to fetch franchise overview:', error);
+      throw error;
+    }
   }
 
-  async getDashboardStats(): Promise<DashboardStats> {
-    // Get franchise counts
-    const { data: franchises, error: franchiseError } = await supabase
-      .from('franchises')
-      .select(`
-        id,
-        name,
-        created_at,
-        settings
-      `);
+  async getFranchiseById(id: string): Promise<FranchiseDetail> {
+    try {
+      console.debug('Fetching franchise by ID:', { id });
 
-    if (franchiseError) throw franchiseError;
+      const result = await withRetry(
+        () => handleApiSingleResponse<{
+          id: string;
+          name: string;
+          address: string;
+          created_at: string;
+          settings: FranchiseSettings;
+          franchise_settings: Array<{ email: string; phone: string }>;
+        }>(
+          supabase
+            .from('franchises')
+            .select(`
+              id,
+              name,
+              address,
+              created_at,
+              settings,
+              franchise_settings (
+                email,
+                phone
+              )
+            `)
+            .eq('id', id)
+            .single(),
+          'fetching franchise details'
+        ),
+        {
+          maxRetries: 3,
+          delayMs: 1500,
+          shouldRetry: (error: Error) =>
+            error instanceof AuthorizationError ||
+            (error instanceof DatabaseError && error.message.includes('permission'))
+        }
+      );
 
-    // Get total revenue for last 30 days
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+      if (!result) {
+        throw new ValidationError('Franchise not found');
+      }
 
-    const { data: revenueData, error: revenueError } = await supabase
-      .from('orders')
-      .select('total')
-      .gte('created_at', thirtyDaysAgo.toISOString());
+      // Get additional metrics with retries
+      const [staffActivity, menuPerformance] = await Promise.all([
+        withRetry(
+          () => handleRpcResponse<{ active: number; total: number }>(
+            supabase.rpc('get_franchise_staff_activity', { p_franchise_id: id }),
+            'fetching staff activity'
+          ),
+          {
+            maxRetries: 3,
+            delayMs: 1500,
+            shouldRetry: (error: Error) =>
+              error instanceof AuthorizationError ||
+              (error instanceof DatabaseError && error.message.includes('permission'))
+          }
+        ).catch(() => ({ active: 0, total: 0 })),
+        withRetry(
+          () => handleRpcResponse<{
+            popular_items: Array<{ name: string; order_count: number; revenue: number }>;
+            revenue_by_category: Record<string, number>;
+          }>(
+            supabase.rpc('get_franchise_menu_performance', { p_franchise_id: id }),
+            'fetching menu performance'
+          ),
+          {
+            maxRetries: 3,
+            delayMs: 1500,
+            shouldRetry: (error: Error) =>
+              error instanceof AuthorizationError ||
+              (error instanceof DatabaseError && error.message.includes('permission'))
+          }
+        ).catch(() => ({ popular_items: [], revenue_by_category: {} }))
+      ]);
 
-    if (revenueError) throw revenueError;
-
-    // Get total staff count
-    const { count: staffCount, error: staffError } = await supabase
-      .from('staff')
-      .select('*', { count: 'exact', head: true })
-      .eq('status', 'active');
-
-    if (staffError) throw staffError;
-
-    // Get recent franchises
-    const { data: recentFranchises, error: recentError } = await supabase
-      .from('franchises')
-      .select(`
-        id,
-        name,
-        created_at,
-        settings
-      `)
-      .order('created_at', { ascending: false })
-      .limit(5);
-
-    if (recentError) throw recentError;
-
-    // Get top performing franchises
-    const { data: topPerformers, error: topError } = await supabase.rpc(
-      'get_top_performing_franchises',
-      { days_ago: 30, limit_count: 5 }
-    ) as { data: TopPerformingFranchise[] | null; error: any };
-
-    if (topError) throw topError;
-
-    // Log dashboard access
-    await this.logActivity({
-      actionType: 'report_access',
-      details: { report: 'dashboard_stats' }
-    });
-
-    return {
-      totalFranchises: franchises.length,
-      activeFranchises: franchises.filter(f => 
-        (f.settings as FranchiseSettings)?.subscription_status === 'active'
-      ).length,
-      totalRevenue: revenueData.reduce((sum, order) => sum + (order.total || 0), 0),
-      totalStaff: staffCount || 0,
-      recentFranchises: (recentFranchises as FranchiseWithSettings[]).map(f => ({
-        id: f.id,
-        name: f.name,
-        created_at: f.created_at,
-        status: f.settings?.subscription_status || 'inactive'
-      })),
-      topPerformers: (topPerformers || []).map(f => ({
-        id: f.franchise_id,
-        name: f.franchise_name,
-        revenue: f.total_revenue,
-        orders: f.order_count
-      }))
-    };
-  }
-
-  async updateFranchiseSettings(
-    franchiseId: string,
-    settings: Partial<FranchiseSettings>
-  ): Promise<void> {
-    const { error } = await supabase
-      .from('franchises')
-      .update({ settings })
-      .eq('id', franchiseId);
-
-    if (error) throw error;
-
-    await this.logActivity({
-      actionType: 'franchise_update',
-      details: { franchise_id: franchiseId, settings_updated: Object.keys(settings) }
-    });
+      return {
+        id: result.id,
+        name: result.name,
+        address: result.address,
+        created_at: result.created_at,
+        email: result.franchise_settings[0]?.email || '',
+        phone: result.franchise_settings[0]?.phone || '',
+        settings: result.settings,
+        staff_count: staffActivity.total || 0,
+        active_staff: staffActivity.active || 0,
+        total_revenue: 0,
+        total_orders: 0,
+        status: result.settings.subscription_status,
+        performance_metrics: {
+          popular_items: menuPerformance.popular_items.map(item => ({
+            name: item.name,
+            order_count: item.order_count,
+            revenue: item.revenue
+          })) || [],
+          revenue_by_category: menuPerformance.revenue_by_category || {}
+        }
+      };
+    } catch (error) {
+      console.error('Error fetching franchise by ID:', error);
+      throw error;
+    }
   }
 
   async createFranchise(data: FranchiseCreateInput): Promise<string> {
-    const { data: franchise, error } = await supabase
-      .from('franchises')
-      .insert([{
-        name: data.name,
-        address: data.address,
-        settings: {
-          ...data.settings,
-          subscription_status: data.settings.subscription_status || 'active'
+    try {
+      console.debug('Creating new franchise:', data);
+
+      const result = await withRetry(
+        () => handleApiSingleResponse<{ id: string }>(
+          supabase
+            .from('franchises')
+            .insert([{
+              name: data.name,
+              address: data.address,
+              settings: {
+                subscription_status: data.settings.subscription_status || 'active',
+                tax_rate: data.settings.tax_rate || 0,
+                currency: data.settings.currency || 'INR',
+                business_name: data.settings.business_name || data.name
+              }
+            }])
+            .select('id')
+            .single(),
+          'creating franchise'
+        ),
+        {
+          maxRetries: 3,
+          delayMs: 1500,
+          shouldRetry: (error: Error) =>
+            error instanceof AuthorizationError ||
+            (error instanceof DatabaseError && error.message.includes('permission'))
         }
-      }])
-      .select('id')
-      .single();
+      );
 
-    if (error) throw error;
-
-    // Create franchise settings
-    const { error: settingsError } = await supabase
-      .from('franchise_settings')
-      .insert([{
-        franchise_id: franchise.id,
-        email: data.email,
-        phone: data.phone
-      }]);
-
-    if (settingsError) throw settingsError;
-
-    await this.logActivity({
-      actionType: 'franchise_create',
-      details: { franchise_id: franchise.id, name: data.name }
-    });
-
-    return franchise.id;
-  }
-
-  async deleteFranchise(id: string): Promise<void> {
-    const { error } = await supabase
-      .from('franchises')
-      .delete()
-      .eq('id', id);
-
-    if (error) throw error;
-
-    await this.logActivity({
-      actionType: 'franchise_delete',
-      details: { franchise_id: id }
-    });
-  }
-
-  async manageStaff(
-    franchiseId: string,
-    action: 'add' | 'update' | 'remove',
-    staffData: { id?: string; [key: string]: any }
-  ): Promise<void> {
-    await this.logActivity({
-      actionType: 'staff_manage',
-      details: { 
-        franchise_id: franchiseId,
-        action,
-        staff_id: staffData.id
+      if (!result?.id) {
+        throw new ValidationError('Failed to create franchise');
       }
+
+      // Create franchise settings
+      await withRetry(
+        () => handleApiSingleResponse(
+          supabase
+            .from('franchise_settings')
+            .insert([{
+              franchise_id: result.id,
+              email: data.email,
+              phone: data.phone
+            }])
+            .select('id')
+            .single(),
+          'creating franchise settings'
+        ),
+        {
+          maxRetries: 3,
+          delayMs: 1500,
+          shouldRetry: (error: Error) =>
+            error instanceof AuthorizationError ||
+            (error instanceof DatabaseError && error.message.includes('permission'))
+        }
+      );
+
+      console.debug('Successfully created franchise:', { id: result.id });
+      return result.id;
+    } catch (error) {
+      console.error('Failed to create franchise:', error);
+      throw error;
+    }
+  }
+
+  async updateFranchiseSettings(franchiseId: string, settings: Partial<FranchiseSettings>): Promise<void> {
+    try {
+      console.debug('Updating franchise settings:', { franchiseId, settings });
+
+      // Verify franchise exists and get current settings
+      const franchise = await withRetry(
+        () => handleApiSingleResponse<{ settings: FranchiseSettings }>(
+          supabase
+            .from('franchises')
+            .select('settings')
+            .eq('id', franchiseId)
+            .single(),
+          'verifying franchise exists'
+        ),
+        {
+          maxRetries: 3,
+          delayMs: 1500,
+          shouldRetry: (error: Error) =>
+            error instanceof AuthorizationError ||
+            (error instanceof DatabaseError && error.message.includes('permission'))
+        }
+      );
+
+      if (!franchise) {
+        throw new ValidationError('Franchise not found');
+      }
+
+      // Merge settings
+      const updatedSettings = {
+        ...franchise.settings,
+        ...settings,
+        updated_at: new Date().toISOString()
+      };
+
+      // Update settings
+      await withRetry(
+        () => handleApiSingleResponse(
+          supabase
+            .from('franchises')
+            .update({ settings: updatedSettings })
+            .eq('id', franchiseId)
+            .select()
+            .single(),
+          'updating franchise settings'
+        ),
+        {
+          maxRetries: 3,
+          delayMs: 1500,
+          shouldRetry: (error: Error) =>
+            error instanceof AuthorizationError ||
+            (error instanceof DatabaseError && error.message.includes('permission'))
+        }
+      );
+
+      console.debug('Successfully updated franchise settings');
+    } catch (error) {
+      console.error('Failed to update franchise settings:', error);
+      throw error;
+    }
+  }
+
+  private async getFranchiseRevenue(days: number): Promise<number> {
+    return withRetry(
+      () => handleRpcResponse<number>(
+        supabase.rpc('get_total_revenue_last_30_days'),
+        'fetching revenue data',
+        isNumber
+      ),
+      {
+        maxRetries: 3,
+        delayMs: 1500,
+        shouldRetry: (error: Error) =>
+          error instanceof AuthorizationError ||
+          (error instanceof DatabaseError && error.message.includes('permission'))
+      }
+    ).catch(error => {
+      console.error('Revenue fetch error after retries:', error);
+      return 0;
+    });
+  }
+
+  private async getFranchiseStaffCount(): Promise<number> {
+    return withRetry(
+      () => handleRpcResponse<number>(
+        supabase.rpc('get_total_active_staff_count'),
+        'fetching staff count',
+        isNumber
+      ),
+      {
+        maxRetries: 3,
+        delayMs: 1500,
+        shouldRetry: (error: Error) =>
+          error instanceof AuthorizationError ||
+          (error instanceof DatabaseError && error.message.includes('permission'))
+      }
+    ).catch(error => {
+      console.error('Staff count fetch error after retries:', error);
+      return 0;
+    });
+  }
+
+  private async getRecentFranchises(limit: number) {
+    return handleApiArrayResponse(
+      supabase
+        .from('franchises')
+        .select('id, name, created_at, settings')
+        .order('created_at', { ascending: false })
+        .limit(limit),
+      'fetching recent franchises'
+    );
+  }
+
+  private async getTopPerformers(days: number, limit: number): Promise<TopPerformer[]> {
+    return withRetry(
+      () => handleRpcResponse<TopPerformer[]>(
+        supabase.rpc('get_top_performing_franchises', {
+          days_ago: days,
+          limit_count: limit
+        }),
+        'fetching top performers',
+        isTopPerformerArray
+      ),
+      {
+        maxRetries: 3,
+        delayMs: 1500,
+        shouldRetry: (error: Error) =>
+          error instanceof AuthorizationError ||
+          (error instanceof DatabaseError && error.message.includes('permission'))
+      }
+    ).catch(error => {
+      console.error('Top performers fetch error after retries:', error);
+      return [];
     });
   }
 }

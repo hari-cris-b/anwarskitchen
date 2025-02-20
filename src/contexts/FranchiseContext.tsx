@@ -1,11 +1,12 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from './AuthContext';
 import { supabase } from '../lib/supabase';
-import { FranchiseSettings } from '../types/franchise';
-import { PostgrestResponse } from '@supabase/supabase-js';
+import { FranchiseSettings, DbFranchiseSettings } from '../types/franchise';
+import { handleApiSingleResponse, handleApiArrayResponse } from '../utils/apiUtils';
+import { DatabaseError, ValidationError } from '../types/errors';
 
 interface FranchiseContextType {
-  settings: FranchiseSettings | null;
+  settings: DbFranchiseSettings | null;
   franchise: { id: string } | null;
   error: string | null;
   loading: boolean;
@@ -34,7 +35,7 @@ const FranchiseContext = createContext<FranchiseContextType>({
 
 export function FranchiseProvider({ children }: { children: React.ReactNode }) {
   const { profile, loading: authLoading } = useAuth();
-  const [settings, setSettings] = useState<FranchiseSettings | null>(null);
+  const [settings, setSettings] = useState<DbFranchiseSettings | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [lastRefresh, setLastRefresh] = useState(Date.now());
@@ -56,7 +57,7 @@ export function FranchiseProvider({ children }: { children: React.ReactNode }) {
     return null;
   };
 
-  const cacheSettings = (franchiseId: string, data: FranchiseSettings) => {
+  const cacheSettings = (franchiseId: string, data: DbFranchiseSettings) => {
     localStorage.setItem(`franchise_settings_${franchiseId}`, JSON.stringify({
       data,
       timestamp: Date.now()
@@ -83,13 +84,21 @@ export function FranchiseProvider({ children }: { children: React.ReactNode }) {
         authLoading
       });
 
-      // Handle case where user has no franchise assigned
+      // Handle super admin case and regular users without franchise
       if (!profile?.franchise_id) {
-        console.debug('No franchise ID available, skipping settings load');
-        setError('No franchise assigned to your account');
-        setSettings(null);
-        setLoading(false);
-        return;
+        if (profile?.staff_type === 'super_admin') {
+          console.debug('Super admin user - no franchise ID required');
+          setSettings(null);
+          setError(null);
+          setLoading(false);
+          return;
+        } else {
+          console.debug('No franchise ID available, skipping settings load');
+          setError('No franchise assigned to your account');
+          setSettings(null);
+          setLoading(false);
+          return;
+        }
       }
 
       // Try loading from cache first
@@ -121,50 +130,47 @@ export function FranchiseProvider({ children }: { children: React.ReactNode }) {
 
       try {
         console.debug('Starting settings query for franchise:', profile.franchise_id);
-        const response = await Promise.race([
-          supabase
-            .from('franchise_settings')
-            .select(`
-              id,
-              franchise_id, 
-              business_name, 
-              tax_rate, 
-              currency, 
-              business_hours,
-              theme,
-              phone,
-              email,
-              address,
-              gst_number,
-              created_at,
-              updated_at
-            `)
-            .eq('franchise_id', profile.franchise_id)
-            .limit(1),
+
+        const settingsData = await Promise.race([
+          handleApiArrayResponse<DbFranchiseSettings>(
+            supabase
+              .from('franchise_settings')
+              .select(`
+                id,
+                franchise_id, 
+                business_name, 
+                tax_rate, 
+                currency, 
+                business_hours,
+                theme,
+                phone,
+                email,
+                address,
+                gst_number,
+                created_at,
+                updated_at,
+                subscription_status
+              `)
+              .eq('franchise_id', profile.franchise_id)
+              .limit(1),
+            'fetching franchise settings'
+          ),
           timeoutPromise
-        ]) as PostgrestResponse<FranchiseSettings>;
+        ]);
 
         if (timeoutId) {
           clearTimeout(timeoutId);
           timeoutId = null;
         }
 
-        if (response.error) {
-          // Special handling for permission errors
-          if (response.error.message.includes('permission denied')) {
-            throw new Error('Waiting for permissions to be established...');
-          }
-          throw response.error;
-        }
-
-        if (!response.data || response.data.length === 0) {
+        if (!settingsData || settingsData.length === 0) {
           console.debug('No settings found for franchise:', profile.franchise_id);
           throw new Error('No settings found for this franchise');
         }
 
         console.debug('Settings loaded successfully');
-        setSettings(response.data[0]);
-        cacheSettings(profile.franchise_id, response.data[0]);
+        setSettings(settingsData[0]);
+        cacheSettings(profile.franchise_id, settingsData[0]);
         setError(null);
         setRetryAttempt(0);
       } catch (err) {
@@ -206,7 +212,13 @@ export function FranchiseProvider({ children }: { children: React.ReactNode }) {
   }, [profile, retryAttempt, authLoading]);
 
   const refreshSettings = useCallback(async (force = false) => {
-    if (!profile?.franchise_id) return;
+    // Skip refresh for super admin or if no franchise ID
+    if (!profile?.franchise_id) {
+      if (profile?.staff_type === 'super_admin') {
+        return; // Super admin doesn't need franchise settings
+      }
+      throw new ValidationError('No franchise assigned to your account');
+    }
     
     if (!force && Date.now() - lastRefresh < CONSTANTS.MIN_REFRESH_INTERVAL) return;
 
@@ -225,11 +237,27 @@ export function FranchiseProvider({ children }: { children: React.ReactNode }) {
     const cleanupFns: Array<() => void> = [];
 
     async function setupSubscription() {
-      if (!profile?.franchise_id || authLoading) {
-        console.debug('Skipping subscription setup - no franchise_id or still loading auth');
+      if (authLoading) {
+        console.debug('Skipping subscription setup - still loading auth');
         setSettings(null);
         setLoading(false);
         return;
+      }
+
+      // Handle super admin case
+      if (!profile?.franchise_id) {
+        if (profile?.staff_type === 'super_admin') {
+          console.debug('Super admin user - skipping franchise settings subscription');
+          setSettings(null);
+          setError(null);
+          setLoading(false);
+          return;
+        } else {
+          console.debug('Skipping subscription setup - no franchise_id');
+          setSettings(null);
+          setLoading(false);
+          return;
+        }
       }
 
       try {
@@ -264,16 +292,15 @@ export function FranchiseProvider({ children }: { children: React.ReactNode }) {
               
               try {
                 // Use optimistic update if possible
-                const newData = payload.new as FranchiseSettings;
+                const newData = payload.new as DbFranchiseSettings;
                 if (newData && settings) {
-                  setSettings(prev => prev === null ? null : ({
-                    ...prev,
-                    ...newData,
-                    // Ensure required fields are present
-                    id: newData.id || prev.id,
-                    franchise_id: newData.franchise_id || prev.franchise_id,
-                    updated_at: newData.updated_at || new Date().toISOString()
-                  }));
+                  setSettings(prev => {
+                    if (!prev) return null;
+                    return {
+                      ...prev,
+                      ...newData
+                    };
+                  });
                 } else {
                   // Fall back to full refresh if needed
                   await loadFranchiseSettings();
@@ -319,30 +346,36 @@ export function FranchiseProvider({ children }: { children: React.ReactNode }) {
 
   const updateSettings = async (newSettings: Partial<FranchiseSettings>) => {
     if (!profile?.franchise_id) {
-      throw new Error('No franchise associated with your account');
+      if (profile?.staff_type === 'super_admin') {
+        throw new ValidationError('Super admin cannot modify franchise settings directly - use franchise management tools instead');
+      }
+      throw new ValidationError('No franchise associated with your account');
     }
 
     try {
-      const { error: updateError } = await supabase
-        .from('franchise_settings')
-        .upsert({
-          ...newSettings,
-          franchise_id: profile.franchise_id,
-          updated_at: new Date().toISOString()
-        });
-
-      if (updateError) throw updateError;
+      await handleApiSingleResponse<DbFranchiseSettings>(
+        supabase
+          .from('franchise_settings')
+          .upsert({
+            ...newSettings,
+            franchise_id: profile.franchise_id,
+            updated_at: new Date().toISOString()
+          })
+          .select()
+          .single(),
+        'updating franchise settings'
+      );
 
       await loadFranchiseSettings();
     } catch (err) {
       console.error('Error updating franchise settings:', err);
-      throw err;
+      throw err instanceof Error ? err : new DatabaseError('Failed to update settings');
     }
   };
 
   const value = {
     settings,
-    franchise: profile ? { id: profile.franchise_id } : null,
+    franchise: profile?.franchise_id ? { id: profile.franchise_id } : null,
     error,
     loading,
     updateSettings,

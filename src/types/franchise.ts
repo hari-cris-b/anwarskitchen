@@ -1,5 +1,26 @@
 export type FranchiseStatus = 'active' | 'inactive' | 'suspended';
 
+export interface FranchiseSettings {
+  subscription_status: FranchiseStatus;
+  tax_rate?: number;
+  currency?: string;
+  business_name?: string;
+  business_hours?: Record<string, any>;
+  theme?: Record<string, any>;
+  phone?: string;
+  email?: string;
+  address?: string;
+  gst_number?: string;
+}
+
+// Database settings interface extends base settings with database fields
+export interface DbFranchiseSettings extends FranchiseSettings {
+  id: string;
+  franchise_id: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface FranchiseOverview {
   id: string;
   name: string;
@@ -12,19 +33,42 @@ export interface FranchiseOverview {
   status: FranchiseStatus;
 }
 
-export interface FranchiseStats {
-  period: string;
-  revenue: number;
-  orders: number;
-  average_order_value: number;
+export interface FranchiseDetail {
+  id: string;
+  name: string;
+  address: string;
+  created_at: string;
+  email: string;
+  phone: string;
+  settings: FranchiseSettings;
+  staff_count: number;
+  active_staff: number;
+  total_revenue: number;
+  total_orders: number;
+  status: FranchiseStatus;
+  performance_metrics?: {
+    popular_items: Array<{
+      name: string;
+      order_count: number;
+      revenue: number;
+    }>;
+    revenue_by_category: Record<string, number>;
+  };
+}
+
+export interface FranchiseWithSettings {
+  id: string;
+  name: string;
+  created_at: string;
+  settings: FranchiseSettings;
 }
 
 export interface TopPerformingFranchise {
-  franchise_id: string;
-  franchise_name: string;
-  total_revenue: number;
-  order_count: number;
-  average_order_value: number;
+  id: string;
+  name: string;
+  revenue: number;
+  orders: number;
+  averageOrderValue: number;
 }
 
 export interface DashboardStats {
@@ -38,51 +82,7 @@ export interface DashboardStats {
     created_at: string;
     status: FranchiseStatus;
   }>;
-  topPerformers: Array<{
-    id: string;
-    name: string;
-    revenue: number;
-    orders: number;
-  }>;
-}
-
-export interface FranchiseSettings {
-  subscription_status: FranchiseStatus;
-  max_staff_count: number;
-  features_enabled: string[];
-  business_hours?: Record<string, { open: string; close: string }>;
-  tax_rate?: number;
-  currency?: string;
-  theme?: {
-    primaryColor: string;
-    secondaryColor: string;
-  };
-}
-
-// Supabase query result types
-export interface SupabaseFranchiseQueryResult {
-  id: string;
-  name: string;
-  address: string;
-  created_at: string;
-  franchise_settings: Array<{
-    email: string;
-    phone: string;
-  }> | null;
-  staff: Array<{
-    count: number;
-  }> | null;
-  orders: Array<{
-    sum: number;
-  }> | null;
-  subscription_status: FranchiseStatus | null;
-}
-
-export interface FranchiseWithSettings {
-  id: string;
-  name: string;
-  settings: FranchiseSettings;
-  created_at: string;
+  topPerformers: TopPerformingFranchise[];
 }
 
 export interface FranchiseCreateInput {
@@ -90,5 +90,84 @@ export interface FranchiseCreateInput {
   address: string;
   email: string;
   phone: string;
+  settings: {
+    subscription_status?: FranchiseStatus;
+    tax_rate?: number;
+    currency?: string;
+    business_name?: string;
+  };
+}
+
+// Supabase Query Result Types
+export interface OrdersAggregate {
+  aggregate: {
+    count?: number;
+    sum?: {
+      total: number;
+    };
+  };
+}
+
+export interface StaffCount {
+  count: number;
+}
+
+export interface FranchiseQueryResult {
+  id: string;
+  name: string;
+  address: string;
+  created_at: string;
+  franchise_settings: Array<{
+    email: string;
+    phone: string;
+  }>;
+  staff: Array<StaffCount>;
+  orders_aggregate: OrdersAggregate;
   settings: FranchiseSettings;
+}
+
+// Franchise Performance Types
+export interface FranchisePerformance {
+  revenue: number;
+  orders: number;
+  averageOrderValue: number;
+  comparisonPeriod?: {
+    start: string;
+    end: string;
+    revenue: number;
+    orders: number;
+    percentageChange: number;
+  };
+}
+
+export interface FranchiseStats {
+  performance: FranchisePerformance;
+  trends: {
+    daily: Array<{
+      date: string;
+      revenue: number;
+      orders: number;
+    }>;
+    weekly: Array<{
+      week: string;
+      revenue: number;
+      orders: number;
+    }>;
+    monthly: Array<{
+      month: string;
+      revenue: number;
+      orders: number;
+    }>;
+  };
+  topProducts: Array<{
+    id: string;
+    name: string;
+    quantity: number;
+    revenue: number;
+  }>;
+  staffMetrics: {
+    total: number;
+    active: number;
+    byRole: Record<string, number>;
+  };
 }

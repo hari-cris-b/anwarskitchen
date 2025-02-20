@@ -18,23 +18,52 @@ export default function RoleBasedRoute({ children, allowedRoles }: RoleBasedRout
   const [checkingAccess, setCheckingAccess] = useState(true);
 
   useEffect(() => {
-    function checkAccess() {
+    let mounted = true;
+
+    async function checkAccess() {
+      // Add a small delay to allow auth state to initialize
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      if (!mounted) return;
+
       if (!profile?.auth_id) {
         authLogger.debug('RoleBasedRoute', 'No auth ID found', {
-          path: location.pathname
+          path: location.pathname,
+          loading
         });
         setCanAccess(false);
         setCheckingAccess(false);
         return;
       }
 
+      // Wait a frame to ensure state is properly initialized
+      await new Promise(resolve => requestAnimationFrame(resolve));
+
       try {
-        // Super admins can access everything
+        if (!mounted) return;
+
+        // Super admins can access everything except POS, and must be in allowedRoles
         if (profile.staff_type === 'super_admin') {
-          authLogger.info('RoleBasedRoute', 'Super admin access granted', {
-            path: location.pathname
-          });
-          setCanAccess(true);
+          const isTryingToAccessPOS = location.pathname.startsWith('/pos');
+          const isSuperAdminAllowed = allowedRoles.includes('super_admin');
+
+          if (isTryingToAccessPOS) {
+            authLogger.warn('RoleBasedRoute', 'Super admin attempting to access POS', {
+              path: location.pathname
+            });
+            setCanAccess(false);
+          } else if (!isSuperAdminAllowed) {
+            authLogger.warn('RoleBasedRoute', 'Super admin role not allowed for this route', {
+              path: location.pathname,
+              allowedRoles
+            });
+            setCanAccess(false);
+          } else {
+            authLogger.info('RoleBasedRoute', 'Super admin access granted', {
+              path: location.pathname
+            });
+            setCanAccess(true);
+          }
           setCheckingAccess(false);
           return;
         }
@@ -42,11 +71,23 @@ export default function RoleBasedRoute({ children, allowedRoles }: RoleBasedRout
         authLogger.debug('RoleBasedRoute', 'Starting access check', {
           profile: {
             staff_type: profile.staff_type,
-            permissions: profile.permissions
-          }
+            permissions: profile.permissions,
+            franchiseId: profile.franchise_id
+          },
+          path: location.pathname
         });
 
-        // First check if user has an allowed role
+        // Verify franchise association for non-super-admin users
+        if (!profile.franchise_id) {
+          authLogger.warn('RoleBasedRoute', 'User has no franchise association', {
+            userType: profile.staff_type
+          });
+          setCanAccess(false);
+          setCheckingAccess(false);
+          return;
+        }
+
+        // Check if user has an allowed role
         const hasAllowedRole = allowedRoles.includes(profile.staff_type);
         
         // If user is admin AND has allowed role, grant access immediately
@@ -116,9 +157,27 @@ export default function RoleBasedRoute({ children, allowedRoles }: RoleBasedRout
       }
     }
 
-    void checkAccess();
-  }, [profile?.auth_id, allowedRoles, location.pathname]);
+    void (async () => {
+      try {
+        await checkAccess();
+      } catch (error) {
+        if (mounted) {
+          authLogger.error('RoleBasedRoute', 'Access check failed', {
+            error,
+            path: location.pathname
+          });
+          setCanAccess(false);
+          setCheckingAccess(false);
+        }
+      }
+    })();
 
+    return () => {
+      mounted = false;
+    };
+  }, [profile?.auth_id, allowedRoles, location.pathname, loading]);
+
+  // If we're loading or checking access, show loading spinner
   if (loading || checkingAccess) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -127,18 +186,23 @@ export default function RoleBasedRoute({ children, allowedRoles }: RoleBasedRout
     );
   }
 
-  if (!profile?.auth_id) {
-    authLogger.debug('RoleBasedRoute', 'No auth ID - redirecting to login', {
+  // After loading is complete, check auth state
+  if (!loading && !profile?.auth_id) {
+    authLogger.debug('RoleBasedRoute', 'No auth ID after loading - redirecting to login', {
       path: location.pathname
     });
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
-  if (!canAccess && !loading && !checkingAccess) {
-    authLogger.warn('RoleBasedRoute', 'Access denied', {
+  // Only redirect to unauthorized if we're certain the user doesn't have access
+  if (!canAccess && !loading && !checkingAccess && profile?.auth_id) {
+    authLogger.warn('RoleBasedRoute', 'Access denied after full check', {
       path: location.pathname,
       userType: profile?.staff_type,
-      allowedRoles
+      allowedRoles,
+      hasAuthId: Boolean(profile?.auth_id),
+      loading,
+      checkingAccess
     });
     return <Navigate to="/unauthorized" state={{ from: location }} replace />;
   }
