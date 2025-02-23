@@ -3,15 +3,13 @@ import {
   Staff,
   CreateStaffDTO,
   UpdateStaffDTO,
-  UserRole,
   StaffCountByType,
   DatabaseStaff,
-  ROLE_PERMISSIONS
+  ROLE_PERMISSIONS,
+  convertToFrontendStaff
 } from '../types/staff';
 import {
   withRetry,
-  withTimeout,
-  SupabaseError,
   TablesRow
 } from '../lib/supabase';
 
@@ -74,20 +72,17 @@ const staffCache = new StaffCache();
 export const staffService = {
   async verifyPin(staffId: string, franchiseId: string, pin: string): Promise<boolean> {
     try {
-      // Validate PIN format
       if (!/^\d{4}$/.test(pin)) {
         throw new StaffServiceError('PIN must be exactly 4 digits');
       }
 
       const { data, error } = await withRetry(
-        async () => {
-          return await supabase
-            .rpc('verify_staff_pin', {
-              p_staff_id: staffId,
-              p_franchise_id: franchiseId,
-              p_pin: pin
-            });
-        }
+        async () => await supabase
+          .rpc('verify_staff_pin', {
+            p_staff_id: staffId,
+            p_franchise_id: franchiseId,
+            p_pin: pin
+          })
       );
 
       if (error) throw new StaffServiceError(error.message, error.code);
@@ -101,20 +96,17 @@ export const staffService = {
 
   async setStaffPin(adminId: string, staffId: string, pin: string): Promise<void> {
     try {
-      // Validate PIN format
       if (!/^\d{4}$/.test(pin)) {
         throw new StaffServiceError('PIN must be exactly 4 digits');
       }
 
       const { error } = await withRetry(
-        async () => {
-          return await supabase
-            .rpc('admin_set_staff_pin', {
-              p_admin_id: adminId,
-              p_staff_id: staffId,
-              p_pin: pin
-            });
-        }
+        async () => await supabase
+          .rpc('admin_set_staff_pin', {
+            p_admin_id: adminId,
+            p_staff_id: staffId,
+            p_pin: pin
+          })
       );
 
       if (error) throw new StaffServiceError(error.message, error.code);
@@ -126,13 +118,9 @@ export const staffService = {
 
   async getStaffByFranchise(franchiseId: string): Promise<Staff[]> {
     try {
-      // Check cache first
       const cachedData = staffCache.get(franchiseId);
-      if (cachedData) {
-        return cachedData;
-      }
+      if (cachedData) return cachedData;
 
-      // Add request debouncing
       await staffCache.shouldWaitForDebounce();
 
       const { data: staffData, error } = await withRetry(async () => await supabase
@@ -159,7 +147,7 @@ export const staffService = {
       if (error) throw new StaffServiceError(error.message, error.code);
 
       const transformedData = (staffData || []).map(staff => 
-        this.convertToFrontendStaff(staff as TablesRow<'staff'>)
+        this.convertDatabaseToStaff(staff as TablesRow<'staff'>)
       );
       staffCache.set(franchiseId, transformedData);
       return transformedData;
@@ -182,7 +170,6 @@ export const staffService = {
 
   async addStaff(staffData: CreateStaffDTO): Promise<Staff> {
     try {
-      // Validate PIN if provided
       if (staffData.pin_code && !/^\d{4}$/.test(staffData.pin_code)) {
         throw new StaffServiceError('PIN must be exactly 4 digits');
       }
@@ -214,8 +201,8 @@ export const staffService = {
       if (error) throw new StaffServiceError(error.message, error.code);
       if (!data?.length) throw new StaffServiceError('Failed to create staff record');
 
-      staffCache.clear(); // Invalidate cache on staff changes
-      return this.convertToFrontendStaff(data[0] as TablesRow<'staff'>);
+      staffCache.clear();
+      return this.convertDatabaseToStaff(data[0] as TablesRow<'staff'>);
 
     } catch (err) {
       console.error('Error adding staff:', err);
@@ -225,7 +212,6 @@ export const staffService = {
 
   async updateStaff(staffData: UpdateStaffDTO): Promise<Staff> {
     try {
-      // Validate PIN if provided
       if (staffData.pin_code && !/^\d{4}$/.test(staffData.pin_code)) {
         throw new StaffServiceError('PIN must be exactly 4 digits');
       }
@@ -260,8 +246,8 @@ export const staffService = {
       if (error) throw new StaffServiceError(error.message, error.code);
       if (!data?.length) throw new StaffServiceError('Staff record not found');
 
-      staffCache.clear(); // Invalidate cache on staff changes
-      return this.convertToFrontendStaff(data[0] as TablesRow<'staff'>);
+      staffCache.clear();
+      return this.convertDatabaseToStaff(data[0] as TablesRow<'staff'>);
 
     } catch (err) {
       console.error('Error updating staff:', err);
@@ -280,33 +266,26 @@ export const staffService = {
 
       if (error) throw new StaffServiceError(error.message, error.code);
       
-      staffCache.clear(); // Invalidate cache on staff changes
+      staffCache.clear();
     } catch (err) {
       console.error('Error deleting staff:', err);
       throw err instanceof StaffServiceError ? err : new StaffServiceError('Failed to delete staff');
     }
   },
 
-  convertToFrontendStaff(dbStaff: TablesRow<'staff'>): Staff {
-    return {
-      id: dbStaff.id,
-      created_at: dbStaff.created_at,
-      updated_at: dbStaff.updated_at,
-      auth_id: dbStaff.auth_id,
-      email: dbStaff.email,
-      staff_type: dbStaff.staff_type,
-      franchise_id: dbStaff.franchise_id,
-      full_name: dbStaff.full_name,
-      status: dbStaff.status,
+  convertDatabaseToStaff(dbStaff: TablesRow<'staff'>): Staff {
+    const staff = convertToFrontendStaff({
+      ...dbStaff,
+      email_verified: false,
+      permissions: ROLE_PERMISSIONS[dbStaff.staff_type],
       can_manage_staff: dbStaff.staff_type === 'admin' || dbStaff.staff_type === 'manager',
       can_void_orders: dbStaff.staff_type === 'admin' || dbStaff.staff_type === 'manager',
-      can_modify_menu: dbStaff.staff_type === 'admin',
-      permissions: ROLE_PERMISSIONS[dbStaff.staff_type],
-      phone: dbStaff.phone,
-      pin_code: dbStaff.pin_code,
-      shift: dbStaff.shift,
-      hourly_rate: dbStaff.hourly_rate,
-      joining_date: dbStaff.joining_date
+      can_modify_menu: dbStaff.staff_type === 'admin'
+    } as DatabaseStaff);
+
+    return {
+      ...staff,
+      hourly_rate: dbStaff.hourly_rate?.toString() || null
     };
   }
 };

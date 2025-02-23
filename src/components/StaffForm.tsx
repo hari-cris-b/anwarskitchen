@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { 
   type Staff, 
-  type UserRole, 
+  type StaffRole,
   type StaffStatus,
   type CreateStaffDTO,
   type UpdateStaffDTO
@@ -18,7 +18,7 @@ interface StaffFormProps {
   isLoading?: boolean;
 }
 
-const STAFF_TYPES: UserRole[] = ['admin', 'manager', 'kitchen', 'staff'];
+const STAFF_TYPES: StaffRole[] = ['admin', 'manager', 'kitchen', 'staff'];
 const STATUS_OPTIONS: StaffStatus[] = ['active', 'inactive', 'suspended', 'on_leave'];
 
 const StaffForm: React.FC<StaffFormProps> = ({
@@ -41,8 +41,7 @@ const StaffForm: React.FC<StaffFormProps> = ({
     pin_code: initialData?.pin_code ?? '',
     shift: initialData?.shift ?? '',
     hourly_rate: initialData?.hourly_rate ?? '',
-    joining_date: initialData?.joining_date ?? '',
-    email_verified: initialData?.email_verified ?? true
+    joining_date: initialData?.joining_date ?? ''
   });
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
@@ -90,26 +89,14 @@ const StaffForm: React.FC<StaffFormProps> = ({
           <label className="block text-sm font-medium text-gray-700">
             Email
           </label>
-          <div className="mt-1 space-y-2">
-            <input
-              type="email"
-              name="email"
-              value={formData.email}
-              onChange={handleChange}
-              required
-              className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-            />
-            <label className="flex items-center space-x-2">
-              <input
-                type="checkbox"
-                name="email_verified"
-                checked={formData.email_verified}
-                onChange={handleChange}
-                className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-              />
-              <span className="text-sm text-gray-600">Verify email for account creation</span>
-            </label>
-          </div>
+          <input
+            type="email"
+            name="email"
+            value={formData.email}
+            onChange={handleChange}
+            required
+            className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+          />
         </div>
 
         <div>

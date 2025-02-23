@@ -40,8 +40,13 @@ const Dashboard: React.FC = () => {
           throw new Error('No dashboard data returned');
         }
 
-        setTopPerformers(stats.topPerformers);
-        setRecentFranchises(stats.recentFranchises);
+        setTopPerformers(stats.top_franchises);
+        setRecentFranchises(stats.recent_orders.map(order => ({
+          id: order.id,
+          name: order.franchise_name,
+          created_at: order.created_at,
+          status: 'active' // TODO: Get actual status from API
+        })));
       } catch (error) {
         console.error('Error loading dashboard data:', error);
         setError(error instanceof Error ? error.message : 'Failed to load dashboard data');

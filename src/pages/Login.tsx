@@ -15,6 +15,32 @@ const Login = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const [showLoading, setShowLoading] = useState(false);
+
+  // Initialize mode from URL params or storage
+  useEffect(() => {
+    const storedMode = localStorage.getItem('pos_login_mode') as LoginMode;
+    const params = new URLSearchParams(location.search);
+    const urlMode = params.get('mode') as LoginMode;
+    
+    if (urlMode === 'super_admin' || storedMode === 'super_admin') {
+      console.log('[Login] Setting mode:', {
+        stored: storedMode,
+        url: urlMode,
+        selected: 'super_admin',
+        timestamp: new Date().toISOString()
+      });
+      setLoginMode('super_admin');
+    }
+  }, [location]);
+
+  // Save mode preference
+  useEffect(() => {
+    localStorage.setItem('pos_login_mode', loginMode);
+    console.log('[Login] Mode updated:', {
+      mode: loginMode,
+      timestamp: new Date().toISOString()
+    });
+  }, [loginMode]);
   
   useEffect(() => {
     if (profile) {
@@ -42,14 +68,28 @@ const Login = () => {
     setFormError(null);
     setShowLoading(true);
 
-    authLogger.info('Login', 'Attempting login', { 
+    const currentMode = loginMode; // Capture current mode
+      // Clear any existing auth state
+      if (currentMode === 'super_admin') {
+        localStorage.removeItem('pos_auth');
+        localStorage.removeItem('pos_admin_auth');
+      }
+
+      authLogger.info('Login', 'Attempting login', { 
+        email,
+        mode: currentMode,
+        timestamp: new Date().toISOString()
+      });
+
+    console.log('[Login] Starting login with:', {
       email,
-      mode: loginMode 
+      mode: currentMode,
+      timestamp: new Date().toISOString()
     });
 
     try {
-      await signIn(email, password, loginMode);
-      authLogger.logLogin(loginMode, email, true);
+      await signIn(email, password, currentMode);
+      authLogger.logLogin(currentMode, email, true);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to sign in';
       authLogger.logLogin(loginMode, email, false, errorMessage);
@@ -190,7 +230,7 @@ const Login = () => {
               >
                 {showLoading ? (
                   <div className="flex items-center space-x-2">
-                    <LoadingSpinner size="small" color="text-white" label="" />
+                    <LoadingSpinner size="small" className="text-white" label="" />
                     <span>Signing in...</span>
                   </div>
                 ) : (

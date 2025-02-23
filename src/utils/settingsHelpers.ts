@@ -27,7 +27,7 @@ export function calculateTotalWithTax(amount: number, settings: FranchiseSetting
   tax: number;
   total: number;
 } {
-  const taxRate = parseFloat(settings.tax_rate || '0') / 100;
+  const taxRate = Number(settings.tax_rate || 0) / 100;
   const tax = amount * taxRate;
   
   return {
@@ -39,8 +39,8 @@ export function calculateTotalWithTax(amount: number, settings: FranchiseSetting
 
 export function getNextInvoiceNumber(settings: FranchiseSettings): string {
   const prefix = settings.printer_config.invoice_prefix || 'INV-';
-  const number = (settings.printer_config.next_invoice_number || 1).toString().padStart(6, '0');
-  return `${prefix}${number}`;
+  const nextNumber = Number(settings.printer_config.next_invoice_number || 1);
+  return `${prefix}${nextNumber.toString().padStart(6, '0')}`;
 }
 
 export function shouldPrintToKitchen(settings: FranchiseSettings): boolean {
@@ -121,35 +121,29 @@ export function getReceiptConfig(settings: FranchiseSettings) {
 export function getBusinessInfo(settings: FranchiseSettings) {
   return {
     name: settings.business_name ?? '',
-    type: settings.business_type ?? '',
-    isChain: settings.is_chain_business ?? false,
-    seatingCapacity: settings.seating_capacity ?? 0,
+    type: settings.business_details?.business_type ?? '',
+    isChain: settings.business_details?.is_chain_business ?? false,
+    seatingCapacity: settings.business_details?.seating_capacity ?? 0,
     contact: {
       phone: settings.phone ?? '',
       email: settings.email ?? '',
-      website: settings.website ?? ''
+      website: settings.business_details?.website ?? ''
     },
     address: {
       full: settings.address ?? '',
-      city: settings.city ?? '',
-      state: settings.state ?? '',
-      country: settings.country ?? '',
-      pincode: settings.pincode ?? ''
+      city: settings.business_details?.location?.city ?? '',
+      state: settings.business_details?.location?.state ?? '',
+      country: settings.business_details?.location?.country ?? '',
+      pincode: settings.business_details?.location?.pincode ?? ''
     }
   };
 }
 
-/**
- * Helper to check if a specific day has business hours configured
- */
 export function isDayConfigured(settings: FranchiseSettings, day: DayOfWeek): boolean {
   const hours = settings.business_hours?.[day];
   return Boolean(hours?.open && hours?.close && !hours?.is_closed);
 }
 
-/**
- * Get formatted business hours for display
- */
 export function getFormattedBusinessHours(settings: FranchiseSettings): Record<DayOfWeek, string> {
   const days: DayOfWeek[] = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
   

@@ -61,12 +61,13 @@ export default function Modal({
                     {title}
                   </Dialog.Title>
                   <Button
-                    variant="ghost"
-                    size="sm"
+                    variant="secondary"
+                    size="small"
                     onClick={onClose}
-                    icon={X}
                     aria-label="Close"
-                  />
+                  >
+                    <X />
+                  </Button>
                 </div>
 
                 <div className="px-6 py-4">

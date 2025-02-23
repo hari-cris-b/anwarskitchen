@@ -1,8 +1,19 @@
+/* eslint-disable max-lines */
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
+
+export const useAuth = () => {
+  const context = useContext(AuthContext);
+  if (!context) {
+    throw new Error('useAuth must be used within an AuthProvider');
+  }
+  return context;
+};
+
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Session, AuthChangeEvent } from '@supabase/supabase-js';
 import { 
-  supabase, 
+  supabase,
+  supabaseAdmin,
   withRetry, 
   isResourceConstraintError, 
   isNetworkError,
@@ -63,15 +74,13 @@ class ProfileManager {
           const entry = value as CacheEntry;
           this.cache.set(key, entry);
           
-          // Use mode from cache entry if available
           if (entry.mode === 'super_admin') {
             setMode('super_admin');
-            return; // Exit early if super_admin found
+            return;
           }
         });
       }
       
-      // Fallback to stored mode if no super_admin found in cache
       if (mode === 'staff' || mode === 'super_admin') {
         setMode(mode);
       }
@@ -140,6 +149,54 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
   const isLoginPage = location.pathname === '/login';
 
+  const fetchProfile = async (userId: string): Promise<DatabaseStaff> => {
+    // Use the new user_profiles view with our secure function
+    const client = loginModeRef.current === 'super_admin' ? supabaseAdmin : supabase;
+    const { data: profile, error: profileError } = await client
+      .rpc('get_user_profile', { p_auth_id: userId });
+
+    if (profileError || !profile) {
+      console.error('No user profile found:', profileError);
+      throw new Error('User profile not found');
+    }
+
+    console.log('Found user profile:', profile);
+
+    // Convert view data to DatabaseStaff type
+    if (profile.role_type === 'super_admin') {
+      const permissions = ROLE_PERMISSIONS.super_admin;
+      return {
+        id: profile.profile_id,
+        auth_id: profile.auth_id,
+        franchise_id: null,
+        full_name: profile.full_name,
+        email: profile.email,
+        email_verified: profile.email_verified,
+        staff_type: 'super_admin' as StaffRole,
+        status: 'active',
+        pin_code: null,
+        shift: null,
+        hourly_rate: null,
+        joining_date: null,
+        phone: null,
+        can_manage_staff: true,
+        can_void_orders: true,
+        can_modify_menu: true,
+        permissions,
+        created_at: profile.created_at,
+        updated_at: profile.updated_at
+      };
+    }
+
+    // Regular staff profile
+    return {
+      ...profile,
+      id: profile.profile_id,
+      staff_type: profile.role_type as StaffRole,
+      permissions: profile.permissions || ROLE_PERMISSIONS[profile.role_type as StaffRole]
+    } as DatabaseStaff;
+  };
+
   const loadUserProfile = useCallback(async (userId: string, mode?: LoginMode) => {
     if (loadingRef.current) return;
     loadingRef.current = true;
@@ -147,153 +204,54 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     try {
       console.log('Loading user profile:', { userId, mode });
 
-      const { profile: cachedProfile, mode: cachedMode } = ProfileManager.get(userId);
-      if (cachedProfile) {
-        // Super admins always use their profile regardless of mode
-        if (cachedProfile.staff_type === 'super_admin') {
-          console.log('Using cached super admin profile:', {
-            userType: cachedProfile.staff_type,
-            requestedMode: mode
-          });
-          setProfile(cachedProfile);
-          loginModeRef.current = 'super_admin';
-          setError(null);
-          return;
-        }
-        
-        // For staff, ensure mode matches
-        if (mode === cachedMode) {
-          console.log('Using cached staff profile:', {
-            profile: cachedProfile,
-            mode: cachedMode,
-            userType: cachedProfile.staff_type
-          });
-          setProfile(cachedProfile);
-          loginModeRef.current = cachedMode;
-          setError(null);
-          return;
-        }
-        // Clear cache if mode mismatch
+      // Always clear cache when mode is super_admin to force a fresh load
+      if (mode === 'super_admin') {
         ProfileManager.clear(userId);
+      } else {
+        const { profile: cachedProfile, mode: cachedMode } = ProfileManager.get(userId);
+        if (cachedProfile) {
+          if (cachedProfile.staff_type === 'super_admin') {
+            console.log('Using cached super admin profile');
+            setProfile(cachedProfile);
+            loginModeRef.current = 'super_admin';
+            setError(null);
+            return;
+          }
+          
+          if (mode === cachedMode) {
+            console.log('Using cached staff profile');
+            setProfile(cachedProfile);
+            loginModeRef.current = cachedMode;
+            setError(null);
+            return;
+          }
+        }
       }
 
-      const fetchProfile = async (): Promise<DatabaseStaff> => {
-        console.log('Attempting to load profile for user:', userId);
+      // Force clear cache before fetching new profile
+      ProfileManager.clear(userId);
 
-        // Try super admin first
-        try {
-          const { data: superAdmin, error: superAdminError } = await supabase
-            .from('super_admin')
-            .select('*')
-            .eq('auth_id', userId)
-            .maybeSingle();
-
-          if (superAdmin) {
-            console.log('Found existing super admin profile');
-            const permissions = ROLE_PERMISSIONS.super_admin;
-            const now = new Date().toISOString();
-
-            return {
-              id: superAdmin.id,
-              auth_id: superAdmin.auth_id,
-              franchise_id: null,
-              full_name: superAdmin.full_name,
-              email: superAdmin.email,
-              email_verified: true,
-              staff_type: 'super_admin' as StaffRole,
-              status: 'active',
-              pin_code: null,
-              shift: null,
-              hourly_rate: null,
-              joining_date: null,
-              phone: null,
-              can_manage_staff: true,
-              can_void_orders: true,
-              can_modify_menu: true,
-              permissions,
-              created_at: now,
-              updated_at: now
-            };
-          }
-
-          // If super admin not found and user is trying to login as super admin
-          if (mode === 'super_admin' || loginModeRef.current === 'super_admin') {
-            console.log('Creating/linking super admin account');
-            
-            const { data: userData, error: userError } = await supabase.auth.getUser(userId);
-            if (userError) throw new Error('Failed to get user details');
-
-            const userEmail = userData.user.email;
-            if (!userEmail) throw new Error('User email not found');
-
-            // Create and link super admin account
-            const { data: newSuperAdmin, error: createError } = await supabase.rpc('ensure_and_link_super_admin', {
-              p_email: userEmail,
-              p_auth_id: userId,
-              p_full_name: userData.user.user_metadata?.full_name || 'Super Admin'
-            });
-
-            if (createError) throw createError;
-            if (!newSuperAdmin) throw new Error('Failed to create super admin account');
-
-            // Return the newly created super admin profile
-            const now = new Date().toISOString();
-            return {
-              id: newSuperAdmin.id,
-              auth_id: newSuperAdmin.auth_id,
-              franchise_id: null,
-              full_name: newSuperAdmin.full_name,
-              email: newSuperAdmin.email,
-              email_verified: true,
-              staff_type: 'super_admin' as StaffRole,
-              status: 'active',
-              pin_code: null,
-              shift: null,
-              hourly_rate: null,
-              joining_date: null,
-              phone: null,
-              can_manage_staff: true,
-              can_void_orders: true,
-              can_modify_menu: true,
-              permissions: ROLE_PERMISSIONS.super_admin,
-              created_at: now,
-              updated_at: now
-            };
-          }
-        } catch (error) {
-          console.error('Error handling super admin profile:', error);
-          if (mode === 'super_admin') throw error;
-        }
-
-        // If not super admin or super admin failed, try staff
-        console.log('Checking staff profile');
-        const { data: staff, error: staffError } = await supabase
-          .from('staff')
-          .select('*')
-          .eq('auth_id', userId)
-          .single();
-
-        if (staffError || !staff) {
-          console.error('No staff profile found:', staffError);
-          throw new Error('User profile not found');
-        }
-
-        console.log('Found staff profile:', staff);
-        return {
-          ...staff,
-          permissions: staff.permissions || ROLE_PERMISSIONS[staff.staff_type as StaffRole]
-        } as DatabaseStaff;
-      };
-
-      const userData = await withRetry(fetchProfile, {
+      const userData = await withRetry(() => fetchProfile(userId), {
         maxRetries: MAX_PROFILE_RETRIES,
         timeoutMs: PROFILE_LOAD_TIMEOUT,
         isAuth: true
       });
 
+      console.log('Fetched user profile:', userData);
+
       const effectiveMode = mode || loginModeRef.current;
-      ProfileManager.set(userId, userData, effectiveMode);
+      const finalMode = userData.staff_type === 'super_admin' ? 'super_admin' : effectiveMode;
+      
+      // Ensure permissions are set correctly
+      if (userData.staff_type === 'super_admin') {
+        userData.permissions = ROLE_PERMISSIONS.super_admin;
+      } else {
+        userData.permissions = userData.permissions || ROLE_PERMISSIONS[userData.staff_type];
+      }
+
+      ProfileManager.set(userId, userData, finalMode);
       setProfile(userData);
+      loginModeRef.current = finalMode;
       setError(null);
 
     } catch (err) {
@@ -328,16 +286,13 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         return;
       
       case 'INITIAL_SESSION':
-        // Initial session is handled separately in initializeAuth
         return;
       
       case 'SIGNED_IN':
       case 'TOKEN_REFRESHED':
       case 'USER_UPDATED':
-        // Handle events that might need profile loading
         if (newSession?.user?.id) {
           const currentProfile = profile;
-          // Always preserve super admin status
           const effectiveMode = currentProfile?.staff_type === 'super_admin'
             ? 'super_admin'
             : loginModeRef.current;
@@ -347,7 +302,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         setLoading(false);
         break;
     }
-  }, [loadUserProfile]);
+  }, [loadUserProfile, profile]);
 
   useEffect(() => {
     let mounted = true;
@@ -365,32 +320,32 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         setLoading(true);
         console.log('Initializing auth...');
         
-        const { data: { session: initialSession } } = await supabase.auth.getSession();
+        const client = loginModeRef.current === 'super_admin' ? supabaseAdmin : supabase;
+        const { data: { session: initialSession } } = await client.auth.getSession();
         if (!mounted) return;
 
         if (initialSession?.user?.id) {
           console.log('Found initial session:', initialSession.user.id);
           setSession(initialSession);
           
-          // Check for cached super admin profile first
           const { profile: cachedProfile } = ProfileManager.get(initialSession.user.id);
           const effectiveMode = cachedProfile?.staff_type === 'super_admin'
             ? 'super_admin'
             : loginModeRef.current;
             
-          // Keep loading true until profile is loaded
           const profilePromise = loadUserProfile(initialSession.user.id, effectiveMode);
           
-          const { data: { subscription } } = supabase.auth.onAuthStateChange(handleAuthStateChange);
+          const client = loginModeRef.current === 'super_admin' ? supabaseAdmin : supabase;
+          const { data: { subscription } } = client.auth.onAuthStateChange(handleAuthStateChange);
           if (!subscription) {
             throw new Error('Failed to create auth subscription');
           }
           authSubscription = { data: { subscription } };
           
-          // Wait for profile to load before setting loading to false
           await profilePromise;
         } else {
-          const { data: { subscription } } = supabase.auth.onAuthStateChange(handleAuthStateChange);
+          const client = loginModeRef.current === 'super_admin' ? supabaseAdmin : supabase;
+          const { data: { subscription } } = client.auth.onAuthStateChange(handleAuthStateChange);
           if (!subscription) {
             throw new Error('Failed to create auth subscription');
           }
@@ -411,7 +366,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
     void initializeAuth();
     return cleanup;
-  }, [handleAuthStateChange, loadUserProfile, isLoginPage]);
+  }, [handleAuthStateChange, loadUserProfile]);
 
   const signIn = async (email: string, password: string, mode: LoginMode = 'staff') => {
     try {
@@ -419,9 +374,56 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       loginModeRef.current = mode;
       console.log('Signing in:', { email, mode });
 
+      const client = mode === 'super_admin' ? supabaseAdmin : supabase;
+      console.log('[Auth] Using client:', {
+        type: mode === 'super_admin' ? 'admin' : 'regular',
+        mode,
+        timestamp: new Date().toISOString()
+      });
+
+      console.log('[Auth] Attempting sign in with:', { 
+        email, 
+        mode,
+        client: mode === 'super_admin' ? 'admin' : 'regular',
+        timestamp: new Date().toISOString()
+      });
+
+      const start = Date.now();
       const { data, error } = await withRetry(
-        async () => supabase.auth.signInWithPassword({ email, password }),
-        { 
+        async () => {
+          try {
+            const resp = await client.auth.signInWithPassword({ email, password });
+            const duration = Date.now() - start;
+            
+            if (resp.error) {
+              console.error('[Auth] Sign in failed:', {
+                status: resp.error.status,
+                message: resp.error.message,
+                mode,
+                duration,
+                timestamp: new Date().toISOString()
+              });
+            } else {
+              console.log('[Auth] Sign in successful:', {
+                userId: resp.data.user?.id,
+                mode,
+                duration,
+                timestamp: new Date().toISOString()
+              });
+            }
+            return resp;
+          } catch (err) {
+            const duration = Date.now() - start;
+            console.error('[Auth] Sign in error:', {
+              error: err,
+              mode,
+              duration,
+              timestamp: new Date().toISOString()
+            });
+            throw err;
+          }
+        },
+        {
           maxRetries: AUTH_RETRY_COUNT,
           timeoutMs: PROFILE_LOAD_TIMEOUT,
           isAuth: true
@@ -462,8 +464,15 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       setError(null);
       console.log('Signing out...');
       
+      // Clear all auth states
+      localStorage.removeItem('pos_auth');
+      localStorage.removeItem('pos_admin_auth');
+      localStorage.removeItem('pos_login_mode');
+      ProfileManager.clear();
+
+      const client = loginModeRef.current === 'super_admin' ? supabaseAdmin : supabase;
       const { error } = await withRetry(
-        async () => supabase.auth.signOut(),
+        async () => client.auth.signOut(),
         {
           maxRetries: 1,
           timeoutMs: PROFILE_LOAD_TIMEOUT,
@@ -551,12 +560,4 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       {children}
     </AuthContext.Provider>
   );
-};
-
-export const useAuth = (): AuthContextType => {
-  const context = useContext(AuthContext);
-  if (!context) {
-    throw new Error('useAuth must be used within an AuthProvider');
-  }
-  return context;
 };

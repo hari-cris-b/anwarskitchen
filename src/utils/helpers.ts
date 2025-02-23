@@ -1,48 +1,120 @@
-import { OrderStatus } from '../types';
+import { OrderStatus } from '../types/orders';
 
-export const formatCurrency = (amount: number): string => {
+export function formatCurrency(amount: number): string {
   return new Intl.NumberFormat('en-IN', {
     style: 'currency',
     currency: 'INR',
-    minimumFractionDigits: 2,
+    minimumFractionDigits: 2
   }).format(amount);
-};
+}
 
-export const formatDate = (date: string | Date): string => {
-  return new Date(date).toLocaleString('en-IN', {
+export function formatDate(date: string | Date): string {
+  return new Date(date).toLocaleDateString('en-IN', {
     year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
+    month: 'long',
+    day: 'numeric'
   });
-};
+}
 
-export const getStatusColor = (status: OrderStatus): { bg: string; text: string } => {
+export function formatTime(date: string | Date): string {
+  return new Date(date).toLocaleTimeString('en-IN', {
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+}
+
+export function formatDateTime(date: string | Date): string {
+  return `${formatDate(date)} ${formatTime(date)}`;
+}
+
+export function getStatusColor(status: OrderStatus): string {
   switch (status) {
     case 'pending':
-      return { bg: 'bg-red-100', text: 'text-red-800' };
+      return 'yellow';
     case 'preparing':
-      return { bg: 'bg-yellow-100', text: 'text-yellow-800' };
+      return 'orange';
     case 'ready':
-      return { bg: 'bg-green-100', text: 'text-green-800' };
-    case 'served':
-      return { bg: 'bg-purple-100', text: 'text-purple-800' };
+      return 'green';
+    case 'completed':
+      return 'blue';
     case 'cancelled':
-      return { bg: 'bg-red-100', text: 'text-red-800' };
+      return 'red';
     default:
-      return { bg: 'bg-gray-100', text: 'text-gray-800' }; // Default case for any unknown status
+      return 'gray';
   }
-};
+}
 
-export const roundToNearest = (num: number, nearest: number = 1): number => {
-  return Math.round(num / nearest) * nearest;
-};
+export function validateEmail(email: string): boolean {
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  return emailRegex.test(email);
+}
 
-export const calculateGST = (amount: number, rate: number): { cgst: number; sgst: number } => {
-  const gstAmount = (amount * rate) / 100;
-  return {
-    cgst: gstAmount / 2,
-    sgst: gstAmount / 2,
+export function validatePhone(phone: string): boolean {
+  const phoneRegex = /^(\+91[\-\s]?)?[0]?(91)?[789]\d{9}$/;
+  return phoneRegex.test(phone);
+}
+
+export function validatePIN(pin: string): boolean {
+  return /^\d{4}$/.test(pin);
+}
+
+export function truncateText(text: string, maxLength: number): string {
+  if (text.length <= maxLength) return text;
+  return text.slice(0, maxLength) + '...';
+}
+
+export function generateId(prefix = ''): string {
+  return `${prefix}${Math.random().toString(36).substr(2, 9)}`;
+}
+
+export function debounce<T extends (...args: any[]) => any>(
+  func: T,
+  wait: number
+): (...args: Parameters<T>) => void {
+  let timeout: NodeJS.Timeout;
+
+  return function executedFunction(...args: Parameters<T>) {
+    const later = () => {
+      clearTimeout(timeout);
+      func(...args);
+    };
+
+    clearTimeout(timeout);
+    timeout = setTimeout(later, wait);
   };
-};
+}
+
+export function throttle<T extends (...args: any[]) => any>(
+  func: T,
+  limit: number
+): (...args: Parameters<T>) => void {
+  let inThrottle: boolean;
+  
+  return function executedFunction(...args: Parameters<T>) {
+    if (!inThrottle) {
+      func(...args);
+      inThrottle = true;
+      setTimeout(() => inThrottle = false, limit);
+    }
+  };
+}
+
+export function retry<T>(
+  fn: () => Promise<T>,
+  retries: number = 3,
+  delay: number = 1000
+): Promise<T> {
+  return fn().catch((error: Error) => {
+    if (retries === 0) throw error;
+    return new Promise(resolve => setTimeout(resolve, delay))
+      .then(() => retry(fn, retries - 1, delay));
+  });
+}
+
+export const capitalize = (str: string): string => 
+  str.charAt(0).toUpperCase() + str.slice(1).toLowerCase();
+
+export const titleCase = (str: string): string =>
+  str.split(' ')
+     .map(word => capitalize(word))
+     .join(' ');

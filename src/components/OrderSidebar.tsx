@@ -1,11 +1,26 @@
 import React, { useMemo } from 'react';
-import { Order } from '../types';
+import { Order, OrderStatus } from '../types/orders';
 import { formatCurrency } from '../utils/helpers';
 
 interface OrderSidebarProps {
   orders: Order[];
   selectedOrderId?: string;
   onSelectOrder: (orderId: string) => void;
+}
+
+function getStatusColor(status: OrderStatus): string {
+  switch (status) {
+    case 'completed':
+      return 'text-green-600';
+    case 'ready':
+      return 'text-orange-600';
+    case 'preparing':
+      return 'text-blue-600';
+    case 'cancelled':
+      return 'text-red-600';
+    default:
+      return 'text-gray-600';
+  }
 }
 
 export default function OrderSidebar({ orders, selectedOrderId, onSelectOrder }: OrderSidebarProps) {
@@ -29,24 +44,18 @@ export default function OrderSidebar({ orders, selectedOrderId, onSelectOrder }:
         }`}
       >
         <div className="flex justify-between items-start mb-1">
-          <span className="font-medium">Table {order.table_number}</span>
+          <span className="font-medium">
+            {order.table_number ? `Table ${order.table_number}` : 'No Table'}
+          </span>
           <span className="text-sm text-gray-500">
             {formatTime(order.created_at)}
           </span>
         </div>
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <span className={`text-sm capitalize ${
-              order.status === 'served' ? 'text-green-600' :
-              order.status === 'ready' ? 'text-orange-600' :
-              order.status === 'preparing' ? 'text-blue-600' :
-              'text-gray-600'
-            }`}>
+            <span className={`text-sm capitalize ${getStatusColor(order.status)}`}>
               {order.status}
             </span>
-            {order.payment_status === 'paid' && (
-              <span className="text-sm text-green-600">(Paid)</span>
-            )}
           </div>
           <span className="text-sm font-medium">
             {typeof order.total === 'number'

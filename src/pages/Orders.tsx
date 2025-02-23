@@ -2,7 +2,8 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useFranchise } from '../contexts/FranchiseContext';
-import { orderService, type OrderWithItems, type OrderStatus } from '../services/orderService';
+import { orderService } from '../services/orderService';
+import type { OrderWithItems, OrderStatus } from '../types/orders';
 import useOrderSubscription from '../hooks/useOrderSubscription';
 import useNotification from '../hooks/useNotification';
 import Button from '../components/Button';
@@ -22,7 +23,7 @@ const statusColors: Record<OrderStatus, string> = {
 const Orders: React.FC = () => {
   const navigate = useNavigate();
   const { profile } = useAuth();
-  const { settings } = useFranchise();
+  const { franchise } = useFranchise();
   const [orders, setOrders] = useState<OrderWithItems[]>([]);
   const [totalOrders, setTotalOrders] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
@@ -43,9 +44,9 @@ const Orders: React.FC = () => {
   const formatCurrency = useCallback((amount: number) => {
     return new Intl.NumberFormat('en-IN', {
       style: 'currency',
-      currency: settings?.currency || 'INR'
+      currency: franchise?.settings?.currency || 'INR'
     }).format(amount);
-  }, [settings?.currency]);
+  }, [franchise?.settings?.currency]);
 
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleString();

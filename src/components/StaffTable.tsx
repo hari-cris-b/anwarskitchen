@@ -1,5 +1,5 @@
 import React from 'react';
-import { Staff, StaffStatus, UserRole } from '../types/staff';
+import { Staff, StaffStatus, StaffRole } from '../types/staff';
 
 interface StaffTableProps {
   staff: Staff[];
@@ -36,11 +36,11 @@ const StatusBadge: React.FC<StatusBadgeProps> = ({ status }) => {
 };
 
 type RoleBadgeProps = {
-  role: UserRole;
+  role: StaffRole;
 };
 
 const RoleBadge: React.FC<RoleBadgeProps> = ({ role }) => {
-  const getRoleColor = (role: UserRole) => {
+  const getRoleColor = (role: StaffRole) => {
     switch (role) {
       case 'super_admin':
         return 'bg-purple-100 text-purple-800';

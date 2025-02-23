@@ -1,9 +1,8 @@
 export type StaffRole = 'super_admin' | 'admin' | 'manager' | 'staff' | 'kitchen';
 export type StaffStatus = 'active' | 'inactive' | 'suspended' | 'on_leave';
 
-export type CreateStaffDTO = Omit<Staff, 'id' | 'auth_id' | 'created_at' | 'updated_at'>;
+export type CreateStaffDTO = Omit<Staff, 'id' | 'auth_id' | 'created_at' | 'updated_at' | 'email_verified' | 'permissions'>;
 export type UpdateStaffDTO = Partial<CreateStaffDTO> & { id: string };
-export type UserRole = StaffRole;
 
 export interface StaffPermissions {
   can_access_pos: boolean;
@@ -35,6 +34,11 @@ export interface Staff {
   updated_at: string;
 }
 
+export interface StaffCountByType {
+  staff_type: StaffRole;
+  count: number;
+}
+
 export interface DatabaseStaff extends Staff {}
 export interface FrontendStaff extends Staff {}
 
@@ -43,14 +47,15 @@ export type AuthUser = Staff;
 export function convertToFrontendStaff(staff: DatabaseStaff): FrontendStaff {
   return {
     ...staff,
+    hourly_rate: staff.hourly_rate?.toString() || null,
     permissions: staff.permissions || ROLE_PERMISSIONS[staff.staff_type]
   };
 }
 
 export const ROLE_PERMISSIONS: Record<StaffRole, StaffPermissions> = {
   super_admin: {
-    can_access_pos: true,
-    can_access_kitchen: true,
+    can_access_pos: false, // Super admin cannot access POS
+    can_access_kitchen: false,
     can_access_reports: true,
     can_manage_menu: true,
     can_manage_staff: true

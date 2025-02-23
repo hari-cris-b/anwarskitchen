@@ -50,10 +50,10 @@ const PerformanceMetrics: React.FC = () => {
         // Calculate metrics with safe defaults
         const statsData = {
           currentPeriod: {
-            revenue: stats.totalRevenue,
-            orders: stats.totalFranchises,
-            averageOrderValue: stats.totalRevenue / (stats.totalFranchises || 1),
-            activeStaff: stats.totalStaff
+            revenue: stats.total_revenue,
+            orders: stats.total_franchises,
+            averageOrderValue: stats.total_revenue / (stats.total_franchises || 1),
+            activeStaff: stats.total_staff
           },
           previousPeriod: {
             revenue: 0, // TODO: Add historical data

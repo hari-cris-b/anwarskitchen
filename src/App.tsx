@@ -1,4 +1,3 @@
-import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import { AuthProvider } from './contexts/AuthContext';
@@ -6,7 +5,6 @@ import { FranchiseProvider } from './contexts/FranchiseContext';
 import ProtectedRoute from './components/ProtectedRoute';
 import SuperAdminRoute from './components/SuperAdminRoute';
 import RoleBasedRoute from './components/RoleBasedRoute';
-import Navigation from './components/Navigation';
 
 // Staff Routes
 import StaffIndex from './pages/StaffIndex';

@@ -15,7 +15,7 @@ const Franchises: React.FC = () => {
 
   const loadFranchises = async () => {
     try {
-      const data = await franchisorService.getFranchiseOverview();
+      const data = await franchisorService.getFranchises();
       setFranchises(data);
       authLogger.debug('SuperAdmin', `Loaded ${data.length} franchises`);
     } catch (err) {

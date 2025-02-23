@@ -21,7 +21,7 @@ const statusColors: Record<OrderStatus, string> = {
 
 const KitchenPage: React.FC = () => {
   const { profile } = useAuth();
-  const { settings } = useFranchise();
+  const { } = useFranchise();
   const [orders, setOrders] = useState<OrderWithItems[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

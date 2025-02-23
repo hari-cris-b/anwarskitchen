@@ -131,9 +131,33 @@ export const supabase = createClient<Database>(
           controller.abort();
         }, REQUEST_CONFIG.INITIAL_TIMEOUT);
 
+        console.log('[Request] Starting fetch:', {
+          url: url.toString(),
+          method: options?.method || 'GET',
+          headers: options?.headers,
+          timestamp: new Date().toISOString()
+        });
+
+        const startTime = Date.now();
+        
         return fetch(url, {
           ...options,
           signal: controller.signal
+        }).then(async response => {
+          console.log('[Request] Fetch completed:', {
+            status: response.status,
+            ok: response.ok,
+            duration: Date.now() - startTime,
+            timestamp: new Date().toISOString()
+          });
+          return response;
+        }).catch(error => {
+          console.error('[Request] Fetch error:', {
+            error,
+            duration: Date.now() - startTime,
+            timestamp: new Date().toISOString()
+          });
+          throw error;
         }).finally(() => {
           clearTimeout(timeoutId);
         });
@@ -148,14 +172,78 @@ export const supabaseAdmin = createClient<Database>(
   {
     ...defaultOptions,
     auth: {
-      autoRefreshToken: false,
-      persistSession: false
+      autoRefreshToken: true,
+      persistSession: true,
+      detectSessionInUrl: true,
+      storageKey: 'pos_admin_auth',
+      storage: {
+        getItem: (key) => {
+          try {
+            const item = localStorage.getItem(`admin_${key}`);
+            return item ? JSON.parse(item) : null;
+          } catch {
+            return null;
+          }
+        },
+        setItem: (key, value) => {
+          try {
+            localStorage.setItem(`admin_${key}`, JSON.stringify(value));
+          } catch (err) {
+            console.warn('Failed to persist admin auth state:', err);
+          }
+        },
+        removeItem: (key) => {
+          try {
+            localStorage.removeItem(`admin_${key}`);
+          } catch (err) {
+            console.warn('Failed to remove admin auth state:', err);
+          }
+        }
+      }
     },
     global: {
       ...defaultOptions.global,
       headers: {
         ...defaultOptions.global?.headers,
-        'x-client-info': 'pos-admin-client'
+        'x-client-info': 'pos-admin-client',
+        'apikey': supabaseServiceRoleKey
+      },
+      fetch: (url, options) => {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => {
+          controller.abort();
+        }, REQUEST_CONFIG.INITIAL_TIMEOUT);
+
+        console.log('[AdminRequest] Starting fetch:', {
+          url: url.toString(),
+          method: options?.method || 'GET',
+          headers: options?.headers,
+          timestamp: new Date().toISOString()
+        });
+
+        const startTime = Date.now();
+        
+        return fetch(url, {
+          ...options,
+          signal: controller.signal
+        }).then(async response => {
+          console.log('[AdminRequest] Fetch completed:', {
+            status: response.status,
+            ok: response.ok,
+            duration: Date.now() - startTime,
+            timestamp: new Date().toISOString()
+          });
+          return response;
+        }).catch(error => {
+          console.error('[AdminRequest] Fetch error:', {
+            error,
+            duration: Date.now() - startTime,
+            timestamp: new Date().toISOString()
+          });
+          throw error;
+        }).finally(() => {
+          clearTimeout(timeoutId);
+        });
       }
     }
   }
@@ -269,15 +357,25 @@ export const withRetry = async <T>(
       );
 
       if (!isRetryable || attempt === maxRetries - 1) {
+        console.error('[Retry] Max attempts reached or non-retryable error:', {
+          attempt: attempt + 1,
+          maxRetries,
+          isRetryable,
+          error: lastError,
+          timestamp: new Date().toISOString()
+        });
         throw lastError;
       }
 
       const waitTime = calculateBackoff(attempt);
-      console.warn(
-        `Attempt ${attempt + 1} failed:`,
-        lastError.message,
-        `Retrying in ${Math.round(waitTime/1000)}s...`
-      );
+      console.warn('[Retry] Operation failed, retrying:', {
+        attempt: attempt + 1,
+        maxRetries,
+        error: lastError.message,
+        waitTime: `${Math.round(waitTime/1000)}s`,
+        isRetryable,
+        timestamp: new Date().toISOString()
+      });
 
       await new Promise(resolve => setTimeout(resolve, waitTime));
     }

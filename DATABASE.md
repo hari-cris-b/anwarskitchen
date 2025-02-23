@@ -828,7 +828,7 @@ USING (auth_id = (select auth.uid()));
    - Cannot modify menu or settings
 
 5. **Staff**
-   - Access to POS and order placement
+   - Access to POS and order, and kitchen interface
    - Cannot access management features
    - Cannot modify menu or settings
 
@@ -873,16 +873,9 @@ Both staff and super admin activities are logged in their respective activity ta
 
 ### Overview
 - Super admins have top-level system access
-- Can manage all franchises and their settings
+- Can manage all franchises, settings and their  Revenue datas  
 - Access controlled through dedicated super_admin table
 - Special functions for privileged operations
-
-### Security Features
-- Dedicated RLS policies for super admin access
-- Only super admins can add new super admins
-- All super admin actions are logged
-- Authentication-level checks using check_super_admin function
-- Role exclusivity enforcement via triggers
 
 ### Role Management
 

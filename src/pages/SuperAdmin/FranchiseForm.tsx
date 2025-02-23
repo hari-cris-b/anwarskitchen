@@ -4,6 +4,7 @@ import Button from '../../components/Button';
 import ErrorAlert from '../../components/ErrorAlert';
 import { franchisorService } from '../../services/franchisorService';
 import type { FranchiseCreateInput, FranchiseDetail } from '../../types/franchise';
+import { supabase } from '../../lib/supabase';
 
 const FranchiseForm: React.FC = () => {
   const { id } = useParams();
@@ -16,12 +17,21 @@ const FranchiseForm: React.FC = () => {
   const [formData, setFormData] = React.useState<FranchiseCreateInput>({
     name: '',
     address: '',
-    email: '',
-    phone: '',
     settings: {
+      business_name: '',
+      email: '',
+      phone: '',
       subscription_status: 'active',
       tax_rate: 0,
       currency: 'INR',
+      address: null,
+      city: null,
+      state: null,
+      country: null,
+      pincode: null,
+      gst_number: null,
+      receipt_header: '',
+      receipt_footer: ''
     }
   });
 
@@ -33,13 +43,11 @@ const FranchiseForm: React.FC = () => {
       }
 
       try {
-        const data = await franchisorService.getFranchiseById(id);
+        const data = await franchisorService.getFranchiseDetails(id);
         setFranchise(data);
         setFormData({
           name: data.name,
           address: data.address,
-          email: data.email,
-          phone: data.phone,
           settings: data.settings
         });
       } catch (err) {
@@ -60,8 +68,24 @@ const FranchiseForm: React.FC = () => {
 
     try {
       if (id) {
-        // Update franchise
-        await franchisorService.updateFranchiseSettings(id, formData.settings);
+        // Update franchise settings
+        const { data, error } = await supabase
+          .from('franchises')
+          .update({
+            name: formData.name,
+            address: formData.address,
+          })
+          .eq('id', id);
+
+        if (error) throw error;
+
+        // Update franchise settings
+        const { error: settingsError } = await supabase
+          .from('franchise_settings')
+          .update(formData.settings)
+          .eq('franchise_id', id);
+
+        if (settingsError) throw settingsError;
       } else {
         // Create new franchise
         await franchisorService.createFranchise(formData);
@@ -137,8 +161,11 @@ const FranchiseForm: React.FC = () => {
             name="email"
             id="email"
             required
-            value={formData.email}
-            onChange={e => setFormData(prev => ({ ...prev, email: e.target.value }))}
+            value={formData.settings.email}
+            onChange={e => setFormData(prev => ({
+              ...prev,
+              settings: { ...prev.settings, email: e.target.value }
+            }))}
             className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
           />
         </div>
@@ -152,8 +179,11 @@ const FranchiseForm: React.FC = () => {
             name="phone"
             id="phone"
             required
-            value={formData.phone}
-            onChange={e => setFormData(prev => ({ ...prev, phone: e.target.value }))}
+            value={formData.settings.phone}
+            onChange={e => setFormData(prev => ({
+              ...prev,
+              settings: { ...prev.settings, phone: e.target.value }
+            }))}
             className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
           />
         </div>

@@ -1,16 +1,16 @@
 import { supabase, withRetry, SupabaseError } from '../lib/supabase';
 import type { Database } from '../types/database.types';
 
-export type OrderStatus = Database['public']['Enums']['order_status'];
-export type Order = Database['public']['Tables']['orders']['Row'];
-export type OrderItem = Database['public']['Tables']['order_items']['Row'];
-export type MenuItem = Database['public']['Tables']['menu_items']['Row'];
+import type { 
+  Order, 
+  OrderItem, 
+  OrderWithItems,
+  OrderStatus 
+} from '../types/orders';
 
-export interface OrderWithItems extends Order {
-  order_items: Array<OrderItem & {
-    menu_items: MenuItem
-  }>;
-}
+// Re-export types that other modules expect to import from here
+export type { OrderWithItems, OrderStatus };
+import { transformOrder } from '../utils/transforms';
 
 export interface OrderItemInput {
   menu_item_id: string;
@@ -198,60 +198,7 @@ export const orderService = {
       if (error) throw error;
       if (!data) throw new Error('No orders data received');
 
-      // Transform the data to match OrderWithItems structure
-      const orders: OrderWithItems[] = data.map((order: any) => {
-        // Get order items from JSONB data
-        let orderItems = [];
-        try {
-          const items = typeof order.order_items === 'string'
-            ? JSON.parse(order.order_items)
-            : order.order_items;
-
-          orderItems = (items || []).map((item: any) => ({
-            id: item.id,
-            order_id: item.order_id,
-            menu_item_id: item.menu_item_id,
-            quantity: item.quantity,
-            price_at_time: item.price_at_time,
-            notes: item.notes,
-            created_at: item.created_at,
-            menu_items: {
-              id: item.menu_items.id,
-              franchise_id: item.menu_items.franchise_id,
-              name: item.menu_items.name,
-              description: item.menu_items.description || null,
-              price: item.menu_items.price,
-              category: item.menu_items.category,
-              is_available: item.menu_items.is_available,
-              created_at: item.menu_items.created_at,
-              updated_at: item.menu_items.updated_at
-            }
-          }));
-        } catch (err) {
-          console.error('Error parsing order items:', err);
-          orderItems = [];
-        }
-
-        return {
-          id: order.id,
-          franchise_id: order.franchise_id,
-          status: order.status as OrderStatus,
-          table_number: order.table_number,
-          customer_name: order.customer_name,
-          server_id: order.server_id,
-          server_name: order.server_name,
-          notes: order.notes,
-          subtotal: order.subtotal,
-          tax: order.tax,
-          discount: order.discount,
-          additional_charges: order.additional_charges,
-          total: order.total,
-          payment_status: order.payment_status,
-          created_at: order.created_at,
-          updated_at: order.updated_at,
-          order_items: orderItems
-        };
-      });
+      const orders: OrderWithItems[] = data.map(transformOrder);
 
       const result = { orders, total: totalCount };
       orderCache.set(cacheKey, { ...result, timestamp: Date.now() });
@@ -324,7 +271,7 @@ export const orderService = {
         .filter(key => key.startsWith(orderInput.franchise_id))
         .forEach(key => orderCache.delete(key));
 
-      return completeOrder as OrderWithItems;
+      return transformOrder(completeOrder[0]);
 
     } catch (err) {
       console.error('Error creating order:', err);
@@ -374,12 +321,7 @@ export const orderService = {
       if (fetchError) throw fetchError;
       if (!data || !data.length) throw new Error('Failed to fetch updated order');
 
-      const updatedOrder = data[0];
-
-      if (fetchError) throw fetchError;
-      if (!updatedOrder) throw new Error('Failed to fetch updated order');
-
-      return updatedOrder as OrderWithItems;
+      return transformOrder(data[0]);
 
     } catch (err) {
       console.error('Error updating order:', err);

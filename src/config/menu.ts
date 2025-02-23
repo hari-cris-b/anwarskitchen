@@ -1,8 +1,5 @@
 import { v4 as uuidv4 } from 'uuid';
-import { MenuItem } from '../types';
-
-// Define the base menu item type without the database-specific fields
-type BaseMenuItem = Omit<MenuItem, 'id' | 'franchise_id' | 'created_at' | 'updated_at'>;
+import { MenuItem, BaseMenuItem } from '../types/menu';
 
 export const MENU_ITEMS: BaseMenuItem[] = [
   {

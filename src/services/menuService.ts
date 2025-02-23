@@ -1,211 +1,182 @@
 import { supabase } from '../lib/supabase';
-import { MenuItem } from '../types';
-import { MENU_ITEMS } from '../config/menu';
-import { v4 as uuidv4 } from 'uuid';
+import { withRetry } from '../lib/supabase';
+import {
+  MenuItem,
+  MenuItemCreate,
+  MenuItemUpdate,
+  MenuSummary,
+  BaseMenuItem
+} from '../types/index';
 
-const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
-const menuCache = new Map<string, { items: MenuItem[], timestamp: number }>();
+export class MenuServiceError extends Error {
+  constructor(message: string, public code?: string) {
+    super(message);
+    this.name = 'MenuServiceError';
+  }
+}
 
-export class MenuService {
-  private static isCacheValid(franchiseId: string): boolean {
-    const cached = menuCache.get(franchiseId);
-    if (!cached) return false;
-    return Date.now() - cached.timestamp < CACHE_TTL;
+interface CacheEntry<T> {
+  data: T;
+  timestamp: number;
+}
+
+// Cache configuration
+const CACHE_DURATION = 60_000; // 1 minute
+const MIN_BETWEEN_REQUESTS = 2000; // 2 seconds
+
+class MenuCache {
+  private cache = new Map<string, CacheEntry<MenuItem[]>>();
+  private lastRequestTime = 0;
+
+  isValid(franchiseId: string): boolean {
+    const entry = this.cache.get(franchiseId);
+    return entry !== undefined && 
+           Date.now() - entry.timestamp < CACHE_DURATION;
   }
 
-  private static setCache(franchiseId: string, items: MenuItem[]) {
-    menuCache.set(franchiseId, {
-      items,
+  async shouldWaitForRequest(): Promise<void> {
+    const now = Date.now();
+    const timeSinceLastRequest = now - this.lastRequestTime;
+    if (timeSinceLastRequest < MIN_BETWEEN_REQUESTS) {
+      await new Promise(resolve => setTimeout(resolve, MIN_BETWEEN_REQUESTS - timeSinceLastRequest));
+    }
+    this.lastRequestTime = now;
+  }
+
+  get(franchiseId: string): MenuItem[] | null {
+    const entry = this.cache.get(franchiseId);
+    return entry && this.isValid(franchiseId) ? entry.data : null;
+  }
+
+  set(franchiseId: string, data: MenuItem[]) {
+    this.cache.set(franchiseId, {
+      data,
       timestamp: Date.now()
     });
   }
 
-  private static async checkAndInitializeMenu(franchiseId: string): Promise<void> {
-    try {
-      // Check if any menu items exist
-      const { count, error: countError } = await supabase
-        .from('menu_items')
-        .select('*', { count: 'exact', head: true })
-        .eq('franchise_id', franchiseId);
-
-      if (countError) throw countError;
-
-      // If no items exist, initialize with default menu
-      if (!count) {
-        const now = new Date().toISOString();
-        const defaultItems = MENU_ITEMS.map(item => ({
-          id: uuidv4(),
-          franchise_id: franchiseId,
-          name: item.name,
-          price: item.price,
-          category: item.category,
-          tax_rate: item.tax_rate,
-          is_active: true,
-          created_at: now,
-          updated_at: now
-        }));
-
-        const { error: insertError } = await supabase
-          .from('menu_items')
-          .insert(defaultItems);
-
-        if (insertError) throw insertError;
-      }
-    } catch (error) {
-      console.error('Error checking/initializing menu:', error);
-      throw error;
-    }
+  clear() {
+    this.cache.clear();
   }
+}
 
-  static async getMenuItems(franchiseId: string): Promise<MenuItem[]> {
+const menuCache = new MenuCache();
+
+function convertToMenuItem(data: BaseMenuItem & { tax_rate?: number }): MenuItem {
+  return {
+    ...data,
+    tax_rate: data.tax_rate || 0,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  };
+}
+
+export const menuService = {
+  async getMenuItems(franchiseId: string): Promise<MenuItem[]> {
     try {
-      // Check cache first
-      if (this.isCacheValid(franchiseId)) {
-        const cached = menuCache.get(franchiseId);
-        if (cached) return cached.items;
-      }
+      const cachedData = menuCache.get(franchiseId);
+      if (cachedData) return cachedData;
 
-      // Ensure menu is initialized
-      await this.checkAndInitializeMenu(franchiseId);
+      await menuCache.shouldWaitForRequest();
 
-      // Fetch menu items
-      const { data, error } = await supabase
+      const { data: menuData, error } = await withRetry(async () => await supabase
         .from('menu_items')
         .select('*')
         .eq('franchise_id', franchiseId)
         .order('category')
-        .order('name');
+        .order('name'));
 
-      if (error) throw error;
+      if (error) throw new MenuServiceError(error.message, error.code);
 
-      const items = data || [];
-      this.setCache(franchiseId, items);
+      const items = (menuData || []).map(convertToMenuItem);
+      menuCache.set(franchiseId, items);
       return items;
-    } catch (error) {
-      console.error('Error getting menu items:', error);
-      throw error;
-    }
-  }
 
-  static async addMenuItem(franchiseId: string, menuItem: Omit<MenuItem, 'id' | 'created_at' | 'updated_at'>): Promise<MenuItem> {
+    } catch (err) {
+      console.error('Error fetching menu items:', err);
+      throw err instanceof MenuServiceError ? err : new MenuServiceError('Failed to fetch menu items');
+    }
+  },
+
+  async addMenuItem(itemData: MenuItemCreate): Promise<MenuItem> {
     try {
-      const now = new Date().toISOString();
-      const newItem = {
-        ...menuItem,
-        franchise_id: franchiseId,
-        created_at: now,
-        updated_at: now,
-        is_active: true
-      };
+      const { data, error } = await withRetry(
+        async () => await supabase
+          .from('menu_items')
+          .insert([itemData])
+          .select()
+          .limit(1)
+      );
 
-      const { data, error } = await supabase
-        .from('menu_items')
-        .insert([newItem])
-        .select()
-        .single();
-      
-      if (error) throw error;
-      
-      // Invalidate cache
-      menuCache.delete(franchiseId);
-      return data;
-    } catch (error) {
-      console.error('Error adding menu item:', error);
-      throw error;
+      if (error) throw new MenuServiceError(error.message, error.code);
+      if (!data?.length) throw new MenuServiceError('Failed to create menu item');
+
+      menuCache.clear();
+      return convertToMenuItem(data[0]);
+
+    } catch (err) {
+      console.error('Error adding menu item:', err);
+      throw err instanceof MenuServiceError ? err : new MenuServiceError('Failed to add menu item');
     }
-  }
+  },
 
-  static async updateMenuItem(itemId: string, updates: Partial<MenuItem>): Promise<MenuItem> {
+  async updateMenuItem(itemData: MenuItemUpdate): Promise<MenuItem> {
     try {
-      const { data, error } = await supabase
-        .from('menu_items')
-        .update({
-          ...updates,
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', itemId)
-        .select()
-        .single();
-        
-      if (error) throw error;
+      const { data, error } = await withRetry(
+        async () => await supabase
+          .from('menu_items')
+          .update({
+            ...itemData,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', itemData.id)
+          .select()
+          .limit(1)
+      );
 
-      // Invalidate cache for the franchise
-      if (data.franchise_id) {
-        menuCache.delete(data.franchise_id);
-      }
-      return data;
-    } catch (error) {
-      console.error('Error updating menu item:', error);
-      throw error;
+      if (error) throw new MenuServiceError(error.message, error.code);
+      if (!data?.length) throw new MenuServiceError('Menu item not found');
+
+      menuCache.clear();
+      return convertToMenuItem(data[0]);
+
+    } catch (err) {
+      console.error('Error updating menu item:', err);
+      throw err instanceof MenuServiceError ? err : new MenuServiceError('Failed to update menu item');
     }
-  }
+  },
 
-  static async deleteMenuItems(itemIds: string[]): Promise<void> {
+  async deleteMenuItem(itemId: string): Promise<void> {
     try {
-      // First get franchise_id to invalidate cache later
-      const { data: items, error: fetchError } = await supabase
-        .from('menu_items')
-        .select('franchise_id')
-        .in('id', itemIds)
-        .single();
+      const { error } = await withRetry(
+        async () => await supabase
+          .from('menu_items')
+          .delete()
+          .eq('id', itemId)
+      );
 
-      if (fetchError) throw fetchError;
+      if (error) throw new MenuServiceError(error.message, error.code);
+      menuCache.clear();
 
-      const { error } = await supabase
-        .from('menu_items')
-        .delete()
-        .in('id', itemIds);
-        
-      if (error) throw error;
-
-      // Invalidate cache
-      if (items?.franchise_id) {
-        menuCache.delete(items.franchise_id);
-      }
-    } catch (error) {
-      console.error('Error deleting menu items:', error);
-      throw error;
+    } catch (err) {
+      console.error('Error deleting menu item:', err);
+      throw err instanceof MenuServiceError ? err : new MenuServiceError('Failed to delete menu item');
     }
-  }
+  },
 
-  static async toggleItemAvailability(itemId: string, isAvailable: boolean): Promise<void> {
+  async getMenuSummary(franchiseId: string): Promise<MenuSummary> {
     try {
-      // First get franchise_id to invalidate cache later
-      const { data: item, error: fetchError } = await supabase
-        .from('menu_items')
-        .select('franchise_id')
-        .eq('id', itemId)
-        .single();
+      const { data, error } = await withRetry(
+        async () => await supabase
+          .rpc('get_menu_summary', { franchise_id_input: franchiseId })
+      );
 
-      if (fetchError) throw fetchError;
+      if (error) throw new MenuServiceError(error.message, error.code);
+      return data as MenuSummary;
 
-      const { error } = await supabase
-        .from('menu_items')
-        .update({ 
-          is_available: isAvailable,
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', itemId);
-        
-      if (error) throw error;
-
-      // Invalidate cache
-      if (item?.franchise_id) {
-        menuCache.delete(item.franchise_id);
-      }
-    } catch (error) {
-      console.error('Error toggling item availability:', error);
-      throw error;
+    } catch (err) {
+      console.error('Error getting menu summary:', err);
+      throw err instanceof MenuServiceError ? err : new MenuServiceError('Failed to get menu summary');
     }
   }
-
-  static async getBulkCategories(franchiseId: string): Promise<string[]> {
-    try {
-      const items = await this.getMenuItems(franchiseId);
-      return Array.from(new Set(items.map(item => item.category))).sort();
-    } catch (error) {
-      console.error('Error getting categories:', error);
-      throw error;
-    }
-  }
-}
+};

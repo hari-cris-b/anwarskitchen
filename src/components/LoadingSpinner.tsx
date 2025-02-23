@@ -1,30 +1,31 @@
-import React from 'react';
-
 interface LoadingSpinnerProps {
   size?: 'small' | 'medium' | 'large';
-  color?: string;
   label?: string;
+  className?: string;
 }
 
-const LoadingSpinner: React.FC<LoadingSpinnerProps> = ({
-  size = 'medium',
-  color = 'text-blue-600',
-  label = 'Loading...'
-}) => {
-  const sizeClasses = {
-    small: 'w-5 h-5',
-    medium: 'w-8 h-8',
-    large: 'w-12 h-12'
+export default function LoadingSpinner({ 
+  size = 'medium', 
+  label = 'Loading...', 
+  className = '' 
+}: LoadingSpinnerProps) {
+  const sizes = {
+    small: 'h-4 w-4',
+    medium: 'h-8 w-8',
+    large: 'h-12 w-12'
   };
 
   return (
-    <div className="flex flex-col items-center justify-center">
+    <div 
+      role="status" 
+      className={`inline-flex items-center ${className}`}
+      aria-label={label}
+    >
       <svg
-        className={`animate-spin ${sizeClasses[size]} ${color}`}
+        className={`animate-spin ${sizes[size]} text-current`}
         xmlns="http://www.w3.org/2000/svg"
         fill="none"
         viewBox="0 0 24 24"
-        data-testid="loading-spinner"
       >
         <circle
           className="opacity-25"
@@ -40,13 +41,9 @@ const LoadingSpinner: React.FC<LoadingSpinnerProps> = ({
           d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
         />
       </svg>
-      {label && (
-        <span className={`mt-2 text-sm ${color}`}>
-          {label}
-        </span>
+      {size !== 'small' && (
+        <span className="sr-only">{label}</span>
       )}
     </div>
   );
-};
-
-export default LoadingSpinner;
+}

@@ -85,7 +85,9 @@ export interface Database {
         };
       };
       get_total_revenue_last_30_days: {
-        Args: Record<string, never>;
+        Args: {
+          days_ago: number;
+        };
         Returns: number;
       };
       get_total_active_staff_count: {

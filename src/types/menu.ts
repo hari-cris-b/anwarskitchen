@@ -1,48 +1,68 @@
+export type Category = 'Main Course' | 'Appetizers' | 'Desserts' | 'Beverages' | 'Breads' | string;
+
+export interface BaseMenuItem {
+  name: string;
+  description: string | null;
+  price: number;
+  category: Category;
+  image_url: string | null;
+  is_available: boolean;
+  is_active: boolean;
+  tax_rate: number;
+}
+
 export interface MenuItem {
   id: string;
   franchise_id: string;
   name: string;
-  price: number;
-  category: string;
   description: string | null;
-  is_available: boolean;
-  tax_rate: number;
+  price: number;
+  category: Category;
   image_url: string | null;
-  is_active: boolean;
-  created_at?: string;
-  updated_at?: string;
-}
-
-export interface Category {
-  id: string;
-  name: string;
-}
-
-export interface MenuItemFormData {
-  name: string;
-  price: number;
-  category: string;
-  description: string | null;
   is_available: boolean;
+  is_active: boolean;
   tax_rate: number;
-  image_url?: string | null;
-  is_active?: boolean;
+  created_at: string;
+  updated_at: string;
 }
 
-export interface MenuItemCreateDTO {
+export interface CategoryGroup {
+  name: Category;
+  items: MenuItem[];
+}
+
+export interface MenuItemCreate {
   franchise_id: string;
   name: string;
+  description?: string | null;
   price: number;
-  category: string;
-  description: string | null;
-  is_available: boolean;
+  category: Category;
+  image_url?: string | null;
+  is_available?: boolean;
+  is_active?: boolean;
   tax_rate: number;
-  image_url: string | null;
-  is_active: boolean;
 }
 
-export interface MenuSettings {
-  currency: string;
-  tax_rate: number;
-  categories: Category[];
+export interface MenuItemUpdate {
+  id: string;
+  name?: string;
+  description?: string | null;
+  price?: number;
+  category?: Category;
+  image_url?: string | null;
+  is_available?: boolean;
+  is_active?: boolean;
+  tax_rate?: number;
 }
+
+export interface MenuSummary {
+  total_items: number;
+  categories: {
+    name: Category;
+    count: number;
+  }[];
+  available_items: number;
+}
+
+// Alias for backward compatibility
+export type MenuCategory = CategoryGroup;

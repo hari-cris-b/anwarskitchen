@@ -465,7 +465,7 @@ const ReportDisplay = ({ data, type, onSort, sortConfig, onExport }: ReportDispl
 
 export default function Reports() {
   const { profile } = useAuth();
-  const { settings } = useFranchise();
+  const { franchise } = useFranchise();
   const [loading, setLoading] = useState(false);
   const [reportData, setReportData] = useState<ReportData | null>(null);
   const [dateRange, setDateRange] = useState({
